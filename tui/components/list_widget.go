@@ -1,4 +1,4 @@
-package list
+package components
 
 import (
 	"strings"
@@ -10,7 +10,7 @@ type Item interface {
 	Height(width int) int
 }
 
-type RenderedItem struct {
+type renderedItem struct {
 	content string
 	height  int
 }
@@ -23,15 +23,15 @@ type List struct {
 	offsetIdx  int
 	offsetLine int
 
-	cache    map[int]RenderedItem
+	cache    map[int]renderedItem
 	cacheMu  sync.RWMutex
 	cacheWid int
 }
 
-func New(items ...Item) *List {
+func NewList(items ...Item) *List {
 	return &List{
 		items: items,
-		cache: make(map[int]RenderedItem),
+		cache: make(map[int]renderedItem),
 	}
 }
 
@@ -40,26 +40,13 @@ func (l *List) SetSize(width, height int) {
 	l.height = height
 }
 
-func (l *List) SetGap(gap int) {
-	l.gap = gap
-}
+func (l *List) SetGap(gap int) { l.gap = gap }
 
-func (l *List) Width() int {
-	return l.width
-}
+func (l *List) Width() int  { return l.width }
+func (l *List) Height() int { return l.height }
+func (l *List) Len() int    { return len(l.items) }
 
-func (l *List) Height() int {
-	return l.height
-}
-
-func (l *List) Len() int {
-	return len(l.items)
-}
-
-func (l *List) Items() []Item {
-	return l.items
-}
-
+func (l *List) Items() []Item        { return l.items }
 func (l *List) SetItems(items ...Item) {
 	l.items = items
 	l.offsetIdx = 0
@@ -71,9 +58,9 @@ func (l *List) AppendItems(items ...Item) {
 	l.items = append(l.items, items...)
 }
 
-func (l *List) getItem(idx int) RenderedItem {
+func (l *List) getItem(idx int) renderedItem {
 	if idx < 0 || idx >= len(l.items) {
-		return RenderedItem{}
+		return renderedItem{}
 	}
 
 	l.cacheMu.RLock()
@@ -90,11 +77,11 @@ func (l *List) getItem(idx int) RenderedItem {
 	content = strings.TrimRight(content, "\n")
 	height := strings.Count(content, "\n") + 1
 
-	ri := RenderedItem{content: content, height: height}
+	ri := renderedItem{content: content, height: height}
 
 	l.cacheMu.Lock()
 	if l.cacheWid != l.width {
-		l.cache = make(map[int]RenderedItem)
+		l.cache = make(map[int]renderedItem)
 		l.cacheWid = l.width
 	}
 	l.cache[idx] = ri
@@ -105,7 +92,7 @@ func (l *List) getItem(idx int) RenderedItem {
 
 func (l *List) clearCache() {
 	l.cacheMu.Lock()
-	l.cache = make(map[int]RenderedItem)
+	l.cache = make(map[int]renderedItem)
 	l.cacheMu.Unlock()
 }
 
@@ -115,9 +102,7 @@ func (l *List) InvalidateItem(idx int) {
 	l.cacheMu.Unlock()
 }
 
-func (l *List) Invalidate() {
-	l.clearCache()
-}
+func (l *List) Invalidate() { l.clearCache() }
 
 func (l *List) AtBottom() bool {
 	if len(l.items) == 0 {

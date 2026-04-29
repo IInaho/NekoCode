@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"primusbot/bot"
-	"primusbot/ui"
+	"primusbot/tui"
 )
 
 func main() {
@@ -15,7 +15,7 @@ func main() {
 		return
 	}
 
-	ui.Run()
+	tui.Run()
 }
 
 func runNonInteractive() {

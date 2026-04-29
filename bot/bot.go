@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	_ "embed"
 	"primusbot/agent"
@@ -13,12 +14,14 @@ import (
 )
 
 type Bot struct {
-	Cfg       *config.Config
-	Ctx       context.Context
-	Cancel    context.CancelFunc
-	ChatMgr   *chat.ChatManager
-	CmdParser *command.Parser
-	Agent     *agent.Agent
+	Cfg         *config.Config
+	Ctx         context.Context
+	Cancel      context.CancelFunc
+	ChatMgr     *chat.ChatManager
+	CmdParser   *command.Parser
+	Agent       *agent.Agent
+	streamMu    sync.Mutex
+	streamCancel context.CancelFunc
 }
 
 //go:embed prompt/system.md
@@ -66,7 +69,21 @@ func New() *Bot {
 }
 
 func (b *Bot) Chat(input string, onToken func(string, string), onDone func()) error {
-	return b.ChatMgr.ChatStream(b.Ctx, input, onToken, onDone)
+	streamCtx, streamCancel := context.WithCancel(b.Ctx)
+	b.streamMu.Lock()
+	b.streamCancel = streamCancel
+	b.streamMu.Unlock()
+
+	return b.ChatMgr.ChatStream(streamCtx, input, onToken, onDone)
+}
+
+func (b *Bot) CancelStream() {
+	b.streamMu.Lock()
+	if b.streamCancel != nil {
+		b.streamCancel()
+		b.streamCancel = nil
+	}
+	b.streamMu.Unlock()
 }
 
 func (b *Bot) ExecuteCommand(input string) (string, bool) {
@@ -84,4 +101,8 @@ func (b *Bot) ExecuteCommand(input string) (string, bool) {
 func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string)) (string, error) {
 	result := b.Agent.Run(input, onStep)
 	return result.FinalOutput, result.Error
+}
+
+func (b *Bot) CommandNames() []string {
+	return b.CmdParser.Commands()
 }

@@ -26,6 +26,14 @@ func (p *Parser) Register(name string, handler CommandHandler) {
 	p.handlers[name] = handler
 }
 
+func (p *Parser) Commands() []string {
+	names := make([]string, 0, len(p.handlers))
+	for name := range p.handlers {
+		names = append(names, name)
+	}
+	return names
+}
+
 func (p *Parser) Parse(input string) *Command {
 	trimmed := strings.TrimSpace(input)
 
@@ -71,7 +79,7 @@ func (p *Parser) Execute(cmd *Command) (string, bool) {
 
 	handler, exists := p.handlers[cmd.Name]
 	if !exists {
-		return "", true
+		return "Unknown command: /" + cmd.Name + ". Type /help for available commands.", true
 	}
 
 	return handler(cmd)

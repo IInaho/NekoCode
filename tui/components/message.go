@@ -1,0 +1,34 @@
+package components
+
+import (
+	"primusbot/tui/styles"
+)
+
+type ChatMessage struct {
+	Role             string
+	Content          string
+	ReasoningContent string
+	RenderedContent  string
+}
+
+func (m ChatMessage) ToMessageItem(sty *styles.Styles, id string) Item {
+	switch m.Role {
+	case "user":
+		return NewUserMessageItem(sty, id, m.Content)
+	case "assistant":
+		item := NewAssistantMessageItem(sty, id, m.Content)
+		if m.RenderedContent != "" {
+			item.SetRenderedContent(m.RenderedContent)
+		}
+		if m.ReasoningContent != "" {
+			item.SetReasoningContent(m.ReasoningContent)
+		}
+		return item
+	case "system":
+		return NewSystemMessageItem(sty, id, m.Content)
+	case "error":
+		return NewErrorMessageItem(sty, id, m.Content)
+	default:
+		return NewUserMessageItem(sty, id, m.Content)
+	}
+}

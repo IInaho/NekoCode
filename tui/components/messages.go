@@ -4,20 +4,19 @@ import (
 	"strings"
 	"sync"
 
-	"primusbot/ui/components/list"
-	"primusbot/ui/styles"
+	"primusbot/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
-const (
-	scrollbarThumb = "┃"
-	scrollbarTrack = "│"
+var (
+	scrollbarThumb = styles.HeavyVert
+	scrollbarTrack = styles.Vertical
 )
 
 type Messages struct {
-	*list.List
+	*List
 	Processing     bool
 	Follow         bool
 	sty            *styles.Styles
@@ -27,7 +26,7 @@ type Messages struct {
 
 func NewMessages(width, height int) *Messages {
 	sty := styles.DefaultStyles()
-	l := list.New()
+	l := NewList()
 	l.SetSize(width, height)
 	l.SetGap(1)
 
@@ -75,6 +74,14 @@ func (m *Messages) SetReasoningText(text string) {
 	if m.processingItem != nil {
 		m.processingItem.SetThinkingText(text)
 		m.List.Invalidate()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) SetStreamContentWidth(width int) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.SetContentWidth(width)
 	}
 	m.mu.Unlock()
 }
