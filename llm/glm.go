@@ -63,7 +63,7 @@ func (g *GLM) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*R
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -118,7 +118,7 @@ func (g *GLM) ChatStream(ctx context.Context, messages []Message, tools []ToolDe
 	go func() {
 		defer close(tokenChan)
 		defer close(errChan)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)

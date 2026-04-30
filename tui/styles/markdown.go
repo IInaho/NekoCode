@@ -1,10 +1,12 @@
-// Markdown 渲染器：标题、列表、粗体、斜体、行内代码、代码块着色。
+// Markdown 渲染器：标题、列表、粗体、斜体、行内代码、代码块着色、diff 高亮。
 // RenderMarkdown / RenderMarkdownWithWidth。
 package styles
 
 import (
 	"regexp"
 	"strings"
+
+	"charm.land/lipgloss/v2"
 
 	runewidth "github.com/mattn/go-runewidth"
 )
@@ -14,6 +16,13 @@ var (
 	inlineCodeRegex = regexp.MustCompile("`([^`]+)`")
 	boldRegex       = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	italicRegex     = regexp.MustCompile(`\*([^*]+)\*`)
+	diffLineRegex   = regexp.MustCompile(`^[+\-@] `)
+)
+
+var (
+	diffAddStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#98c379"))
+	diffDelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
+	diffHdrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#7a8ba0"))
 )
 
 func RenderMarkdown(content string) string {
@@ -24,12 +33,69 @@ func RenderMarkdownWithWidth(content string, width int) string {
 	return renderSimpleMarkdown(content, width)
 }
 
+func isDiffLine(line string) (isDiff bool, kind byte) {
+	if !diffLineRegex.MatchString(line) {
+		return false, 0
+	}
+	switch line[0] {
+	case '+':
+		return true, '+'
+	case '-':
+		return true, '-'
+	case '@':
+		return true, '@'
+	}
+	return false, 0
+}
+
+func detectDiffBlocks(lines []string) map[int]bool {
+	diffSet := make(map[int]bool)
+
+	groupStart := -1
+	hasPlus := false
+
+	for i, line := range lines {
+		isDiff, _ := isDiffLine(line)
+
+		if isDiff {
+			if groupStart == -1 {
+				groupStart = i
+				hasPlus = false
+			}
+			if line[0] == '+' {
+				hasPlus = true
+			}
+		} else {
+			if groupStart != -1 && hasPlus {
+				for j := groupStart; j < i; j++ {
+					if d, _ := isDiffLine(lines[j]); d {
+						diffSet[j] = true
+					}
+				}
+			}
+			groupStart = -1
+			hasPlus = false
+		}
+	}
+
+	if groupStart != -1 && hasPlus {
+		for j := groupStart; j < len(lines); j++ {
+			if d, _ := isDiffLine(lines[j]); d {
+				diffSet[j] = true
+			}
+		}
+	}
+
+	return diffSet
+}
+
 func renderSimpleMarkdown(content string, width int) string {
 	lines := strings.Split(content, "\n")
+	diffSet := detectDiffBlocks(lines)
 	var result []string
 	inCodeBlock := false
 
-	for _, line := range lines {
+	for i, line := range lines {
 		if fencedCodeRegex.MatchString(line) {
 			inCodeBlock = !inCodeBlock
 			continue
@@ -37,6 +103,19 @@ func renderSimpleMarkdown(content string, width int) string {
 
 		if inCodeBlock {
 			result = append(result, SubtleStyle.Render(Vertical+" "+line))
+			continue
+		}
+
+		if diffSet[i] {
+			// Render diff lines with original content (before trimming).
+			switch line[0] {
+			case '+':
+				result = append(result, diffAddStyle.Render("+ "+strings.TrimPrefix(line, "+ ")))
+			case '-':
+				result = append(result, diffDelStyle.Render("- "+strings.TrimPrefix(line, "- ")))
+			case '@':
+				result = append(result, diffHdrStyle.Render(line))
+			}
 			continue
 		}
 

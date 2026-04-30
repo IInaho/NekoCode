@@ -5,4 +5,6 @@ func RegisterDefaults(r *Registry) {
 	r.Register(&BashTool{})
 	r.Register(&FileSystemTool{})
 	r.Register(&GlobTool{})
+	r.Register(&EditTool{})
+	r.Register(&GrepTool{})
 }

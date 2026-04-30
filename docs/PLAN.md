@@ -6,12 +6,12 @@
 
 ## P0 — 核心功能
 
-### 1. 精确编辑工具 (EditTool)
+### 1. 精确编辑工具 (EditTool) ✅ 已完成
 - 替代当前 `filesystem.write` 的覆盖写入
 - 接口：`Edit(old_string, new_string, path)` — 精确替换文件中首次出现的字符串
 - 失败时返回友好的 diff 对比
 
-### 2. 内容搜索工具 (GrepTool)
+### 2. 内容搜索工具 (GrepTool) ✅ 已完成
 - 基于 ripgrep 的内容搜索，非文件名匹配
 - 接口：`Grep(pattern, path?, glob?)` — 返回匹配行 + 行号
 - 支持 `-A/-B/-C` 上下文行数
@@ -23,7 +23,7 @@
   - 生成目录树摘要
 - `ctxmgr.Build()` 时自动附加项目上下文
 
-### 4. Diff 展示
+### 4. Diff 展示 ✅ 已完成
 - `EditTool` 执行后返回 old→new 的行级对比
 - TUI 在 Assistant 消息中渲染 diff（+ 绿色，- 红色）
 

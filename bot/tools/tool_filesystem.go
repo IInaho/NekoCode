@@ -26,13 +26,10 @@ func (t *FileSystemTool) Parameters() []Parameter {
 }
 
 func (t *FileSystemTool) DangerLevel(args map[string]interface{}) DangerLevel {
-	op, _ := args["operation"].(string)
-	switch op {
-	case "write":
+	if op, _ := args["operation"].(string); op == "write" {
 		return LevelWrite
-	default:
-		return LevelSafe
 	}
+	return LevelSafe
 }
 
 func (t *FileSystemTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -151,7 +151,7 @@ func (m *Manager) Build(withTools bool) []llm.Message {
 	if withTools {
 		out = append(out, llm.Message{
 			Role:    "system",
-			Content: "当用户要求你执行具体操作（读写文件、运行命令、搜索文件等）时，必须调用函数来实际完成任务。不要只描述你要做什么。如果用户只是在闲聊，直接回复即可。",
+			Content: "当用户要求执行操作时，根据任务选择合适的工具：替换/修改文件内容用 edit，搜索文件内容用 grep，查找文件用 glob，读写文件用 filesystem，运行命令用 bash。必须调用工具实际执行，不要只描述。如果用户只是在闲聊，直接回复即可。",
 		})
 	}
 

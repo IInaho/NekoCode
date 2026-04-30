@@ -163,7 +163,7 @@ func (a *Anthropic) Chat(ctx context.Context, messages []Message, tools []ToolDe
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -250,7 +250,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 			errChan <- err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		reader := NewEventReader(resp.Body)
 		for {

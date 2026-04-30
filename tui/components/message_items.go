@@ -167,10 +167,11 @@ func (m *AssistantMessageItem) Height(width int) int {
 // --- SystemMessageItem ---
 
 type SystemMessageItem struct {
-	id      string
-	content string
-	sty     *styles.Styles
-	cache   cachedRender
+	id              string
+	content         string
+	renderedContent string
+	sty             *styles.Styles
+	cache           cachedRender
 }
 
 func NewSystemMessageItem(sty *styles.Styles, id, content string) *SystemMessageItem {
@@ -179,6 +180,11 @@ func NewSystemMessageItem(sty *styles.Styles, id, content string) *SystemMessage
 
 func (m *SystemMessageItem) ID() string { return m.id }
 
+func (m *SystemMessageItem) SetRenderedContent(content string) {
+	m.renderedContent = content
+	m.cache = cachedRender{}
+}
+
 func (m *SystemMessageItem) Render(width int) string {
 	cw := cappedWidth(width)
 
@@ -186,7 +192,10 @@ func (m *SystemMessageItem) Render(width int) string {
 		return m.cache.rendered
 	}
 
-	content := strings.TrimSpace(m.content)
+	content := m.renderedContent
+	if content == "" {
+		content = strings.TrimSpace(m.content)
+	}
 
 	var s strings.Builder
 	s.WriteString(m.sty.Blue.Render(styles.Vertical+" ") + m.sty.Blue.Bold(true).Render("·") + " " + content)

@@ -14,6 +14,13 @@ import (
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			logPanic(r)
+			panic(r) // re-panic so Bubble Tea can clean up the terminal
+		}
+	}()
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
@@ -122,11 +129,17 @@ func (m *Model) handleDone(msg doneMsg) tea.Cmd {
 			Content: fmt.Sprintf("Error: %v", msg.err),
 		})
 	} else {
+		// Prepend diffs to final content so they render with colors.
+		content := msg.content
+		if msg.diffBlocks != "" {
+			content = msg.diffBlocks + "\n" + content
+		}
+
 		cw := components.CappedWidth(m.Messages.Width())
-		renderedContent := styles.RenderMarkdownWithWidth(msg.content, cw)
+		renderedContent := styles.RenderMarkdownWithWidth(content, cw)
 		m.Messages.AddMessage(components.ChatMessage{
 			Role:             "assistant",
-			Content:          msg.content,
+			Content:          content,
 			ReasoningContent: msg.reasoningContent,
 			RenderedContent:  renderedContent,
 		})
@@ -147,17 +160,12 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+c":
 		return tea.Quit
 
-	case "up", "down":
-		if m.Input.IsEmpty() || m.Input.InHistoryMode() {
-			if msg.String() == "up" {
-				m.Input.HistoryUp()
-			} else {
-				m.Input.HistoryDown()
-			}
-			return nil
-		}
-		m.Messages.Update(msg)
-		m.Input.SetFollow(m.Messages.Follow)
+	// up/down always navigate input history; scroll wheel handles messages
+	case "up":
+		m.Input.HistoryUp()
+		return nil
+	case "down":
+		m.Input.HistoryDown()
 		return nil
 
 	case "pgup", "pgdown":

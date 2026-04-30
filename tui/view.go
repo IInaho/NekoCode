@@ -41,6 +41,7 @@ func (m *Model) View() tea.View {
 
 	v := tea.NewView(fullView)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 
 	c := m.Input.Cursor()
 	if c != nil {

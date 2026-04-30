@@ -14,6 +14,7 @@ import (
 type doneMsg struct {
 	content          string
 	reasoningContent string
+	diffBlocks       string // edit tool diffs, rendered before LLM response
 	err              error
 }
 
@@ -34,8 +35,8 @@ type Model struct {
 
 	Stream      *StreamState
 
-	suggestions      []string
-	suggestionIdx    int
+	suggestions       []string
+	suggestionIdx     int
 	suggestionsVisible bool
 
 	PendingConfirm *agent.ConfirmRequest

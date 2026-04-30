@@ -93,7 +93,7 @@ func (b *Bot) SetConfirmFn(fn agent.ConfirmFunc) {
 
 func (b *Bot) SummarizeIfNeeded() {
 	if b.CtxMgr.NeedsSummarization() {
-		b.CtxMgr.Summarize()
+		_ = b.CtxMgr.Summarize()
 	}
 }
 

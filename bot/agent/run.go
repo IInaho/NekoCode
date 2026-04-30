@@ -4,6 +4,8 @@
 package agent
 
 import (
+	"fmt"
+
 	"primusbot/bot/tools"
 )
 
@@ -33,6 +35,16 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 		reasoning := a.Reason(state)
 
 		result := a.Execute(reasoning)
+
+		// Persist tool interaction in conversation history so future turns see it.
+		if reasoning.Action == ActionExecuteTool {
+			a.ctxMgr.Add("user", "[工具调用: "+reasoning.ActionInput+"]")
+			if result.Error != "" {
+				a.ctxMgr.Add("user", "[工具错误: "+result.Error+"]")
+			} else {
+				a.ctxMgr.Add("user", "[工具结果]\n"+result.Output)
+			}
+		}
 
 		toolName, toolArgs := "", ""
 		if name, args, err := tools.ParseCall(reasoning.ActionInput); err == nil {
@@ -87,7 +99,7 @@ func formatArgs(args map[string]interface{}) string {
 		if s != "" {
 			s += ","
 		}
-		s += k + "=" + v.(string)
+		s += k + "=" + fmt.Sprint(v)
 	}
 	return s
 }

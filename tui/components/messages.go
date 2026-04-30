@@ -50,7 +50,7 @@ func (m *Messages) SetProcessing(processing bool) {
 		m.AppendItems(m.processingItem)
 	} else if !processing && m.processingItem != nil {
 		items := m.Items()
-		m.List.SetItems()
+		m.SetItems()
 		for _, item := range items {
 			if _, ok := item.(*ProcessingItem); !ok {
 				m.AppendItems(item)
@@ -65,7 +65,7 @@ func (m *Messages) SetStreamText(text string) {
 	m.mu.Lock()
 	if m.processingItem != nil {
 		m.processingItem.SetStreamText(text)
-		m.List.Invalidate()
+		m.Invalidate()
 	}
 	m.mu.Unlock()
 }
@@ -74,7 +74,7 @@ func (m *Messages) SetReasoningText(text string) {
 	m.mu.Lock()
 	if m.processingItem != nil {
 		m.processingItem.SetThinkingText(text)
-		m.List.Invalidate()
+		m.Invalidate()
 	}
 	m.mu.Unlock()
 }
@@ -129,6 +129,12 @@ func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 			m.ScrollBy(m.Height())
 		}
 	case tea.MouseMsg:
+		switch mev := msg.Mouse(); mev.Button {
+		case tea.MouseWheelUp:
+			m.ScrollBy(-3)
+		case tea.MouseWheelDown:
+			m.ScrollBy(3)
+		}
 	}
 
 	if m.AtBottom() {
@@ -141,7 +147,7 @@ func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 }
 
 func (m *Messages) View() string {
-	content := m.List.Render()
+	content := m.Render()
 	scrollbar := m.renderScrollbar()
 
 	if scrollbar == "" {

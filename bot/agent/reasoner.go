@@ -1,8 +1,5 @@
-// 决策模块：根据当前 stepState 决定下一步动作。
-// - 斜杠命令 → ActionFinish
-// - 上一轮工具成功 → callLLMForResponse 生成最终回复
-// - 其他情况 → callLLMForTool（Native Function Calling）让 LLM 选择工具或直接聊天
-// descriptorsToToolDefs 将 tools.Descriptor 转为 llm.ToolDef 供 API 调用。
+// 决策模块：每轮通过 callLLMForTool 调用 LLM（Native Function Calling），
+// 上下文包含用户输入 + 历史工具调用/结果，LLM 自主决定继续调用工具或回复文本。
 package agent
 
 import (
@@ -39,25 +36,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		}
 	}
 
-	if state.previousAction == "execute_tool" && state.success {
-		response, err := a.callLLMForResponse(state.input, state.previousOutput)
-		if err != nil {
-			return &ReasoningResult{
-				Thought:     "生成回复失败",
-				Action:      ActionChat,
-				ActionInput: state.previousOutput,
-				IsFinal:     true,
-			}
-		}
-		return &ReasoningResult{
-			Thought:     "工具执行成功，生成回复",
-			Action:      ActionChat,
-			ActionInput: response,
-			IsFinal:     true,
-		}
-	}
-
-	toolInput, err := a.callLLMForTool(state.input)
+	toolInput, err := a.callLLMForTool()
 	if err != nil {
 		return &ReasoningResult{
 			Thought:     "LLM调用失败",
@@ -106,14 +85,10 @@ func (a ActionType) String() string {
 	}
 }
 
-func (a *Agent) callLLMForTool(input string) (string, error) {
+func (a *Agent) callLLMForTool() (string, error) {
 	toolDefs := descriptorsToToolDefs(a.toolRegistry.Descriptors())
 
 	messages := a.ctxMgr.Build(true)
-	messages = append(messages, llm.Message{
-		Role:    "user",
-		Content: input,
-	})
 
 	resp, err := a.llmClient.Chat(a.ctx, messages, toolDefs)
 	if err != nil {
@@ -134,24 +109,6 @@ func (a *Agent) callLLMForTool(input string) (string, error) {
 		return "", fmt.Errorf("解析工具参数失败: %v", err)
 	}
 	return tc.Function.Name + ":" + formatArgs(args), nil
-}
-
-func (a *Agent) callLLMForResponse(userInput, toolOutput string) (string, error) {
-	messages := a.ctxMgr.Build(false)
-	messages = append(messages, llm.Message{
-		Role:    "user",
-		Content: fmt.Sprintf("用户请求: %s\n\n工具执行结果:\n%s\n\n请根据工具执行结果，用友好的方式回复用户。", userInput, toolOutput),
-	})
-
-	resp, err := a.llmClient.Chat(a.ctx, messages, nil)
-	if err != nil {
-		return "", err
-	}
-
-	if len(resp.Choices) > 0 {
-		return strings.TrimSpace(resp.Choices[0].Message.Content), nil
-	}
-	return "", nil
 }
 
 func descriptorsToToolDefs(descs []tools.Descriptor) []llm.ToolDef {

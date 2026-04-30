@@ -26,7 +26,11 @@ func (m ChatMessage) ToMessageItem(sty *styles.Styles, id string) Item {
 		}
 		return item
 	case "system":
-		return NewSystemMessageItem(sty, id, m.Content)
+		item := NewSystemMessageItem(sty, id, m.Content)
+		if m.RenderedContent != "" {
+			item.SetRenderedContent(m.RenderedContent)
+		}
+		return item
 	case "error":
 		return NewErrorMessageItem(sty, id, m.Content)
 	default:
