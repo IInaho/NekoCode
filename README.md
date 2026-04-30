@@ -16,7 +16,7 @@
 
 <p align="center">
   <b>终端里的 AI 伙伴</b><br>
-  <sub>聊天 · 操作文件 · 执行命令 · 危险操作先问你</sub>
+  <sub>软萌猫娘角色 · 能聊天、操作文件、执行命令 · 持续迭代中</sub>
 </p>
 
 <p align="center">
