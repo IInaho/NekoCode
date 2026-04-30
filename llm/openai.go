@@ -28,17 +28,10 @@ func NewOpenAI(apiKey, baseURL, model string) *OpenAI {
 	}
 }
 
-func (o *OpenAI) SetAPIKey(apiKey string) {
-	o.APIKey = apiKey
-}
+func (o *OpenAI) SetAPIKey(apiKey string) { o.APIKey = apiKey }
+func (o *OpenAI) SetBaseURL(url string)   { o.BaseURL = url }
 
-func (o *OpenAI) SetBaseURL(url string) {
-	o.BaseURL = url
-}
-
-func (o *OpenAI) Chat(ctx context.Context, messages []Message) (*Response, error) {
-	url := fmt.Sprintf("%s/chat/completions", o.BaseURL)
-
+func (o *OpenAI) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
 	body := map[string]interface{}{
 		"model":       o.Model,
 		"messages":    messages,
@@ -46,22 +39,24 @@ func (o *OpenAI) Chat(ctx context.Context, messages []Message) (*Response, error
 		"temperature": o.temperature,
 		"stream":      false,
 	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
+	}
 
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", o.APIKey))
 
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +66,6 @@ func (o *OpenAI) Chat(ctx context.Context, messages []Message) (*Response, error
 	if err != nil {
 		return nil, err
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
@@ -80,13 +74,10 @@ func (o *OpenAI) Chat(ctx context.Context, messages []Message) (*Response, error
 	if err := json.Unmarshal(respBody, &response); err != nil {
 		return nil, err
 	}
-
 	return &response, nil
 }
 
-func (o *OpenAI) ChatStream(ctx context.Context, messages []Message) (<-chan StreamToken, <-chan error) {
-	url := fmt.Sprintf("%s/chat/completions", o.BaseURL)
-
+func (o *OpenAI) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error) {
 	body := map[string]interface{}{
 		"model":       o.Model,
 		"messages":    messages,
@@ -94,21 +85,23 @@ func (o *OpenAI) ChatStream(ctx context.Context, messages []Message) (<-chan Str
 		"temperature": o.temperature,
 		"stream":      true,
 	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
+	}
 
 	jsonBody, _ := json.Marshal(body)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		errChan := make(chan error, 1)
 		errChan <- err
 		return nil, errChan
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", o.APIKey))
 
-	client := &http.Client{Timeout: 0}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 0}).Do(req)
 	if err != nil {
 		errChan := make(chan error, 1)
 		errChan <- err
@@ -138,11 +131,9 @@ func (o *OpenAI) ChatStream(ctx context.Context, messages []Message) (<-chan Str
 				}
 				return
 			}
-
 			if chunk == nil {
 				continue
 			}
-
 			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
 				tokenChan <- StreamToken{Content: chunk.Choices[0].Delta.Content}
 			}

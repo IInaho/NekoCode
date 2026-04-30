@@ -1,3 +1,5 @@
+// Update 消息循环：处理 WindowSize、SpinnerTick、doneMsg、confirmMsg、KeyPress。
+// 确认键分流、历史翻阅、命令提示选择、消息发送均在此路由。
 package tui
 
 import (
@@ -32,7 +34,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		return m, m.handleDone(msg)
 
+	case confirmMsg:
+		m.PendingConfirm = &msg.req
+		return m, nil
+
 	case tea.KeyPressMsg:
+		if m.PendingConfirm != nil {
+			return m.handleConfirmKey(msg)
+		}
 		return m, m.handleKeyPress(msg)
 
 	case components.TickMsg:
@@ -58,6 +67,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
 	var cmd tea.Cmd
 	m.Spinner, cmd = m.Spinner.Update(msg)
+	if m.PendingConfirm != nil {
+		m.Messages.SetSpinnerView("")
+		return nil
+	}
 	m.Messages.SetSpinnerView(m.Spinner.View())
 
 	if m.Stream.Active() {
@@ -74,10 +87,26 @@ func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
 		}
 	}
 
+	if m.PendingConfirm != nil {
+		return nil
+	}
 	if m.Stream.Active() || m.Messages.Processing {
 		return tea.Batch(cmd, m.Spinner.Tick)
 	}
 	return nil
+}
+
+func (m *Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "y", "Y":
+		m.PendingConfirm.Response <- true
+	case "esc", "n", "N", "ctrl+c":
+		m.PendingConfirm.Response <- false
+	default:
+		return m, nil
+	}
+	m.PendingConfirm = nil
+	return m, listenConfirm(m.confirmCh)
 }
 
 func (m *Model) handleDone(msg doneMsg) tea.Cmd {
@@ -102,8 +131,15 @@ func (m *Model) handleDone(msg doneMsg) tea.Cmd {
 			RenderedContent:  renderedContent,
 		})
 	}
+	m.PendingConfirm = nil
+	m.updateTokens()
 	m.Messages.GotoBottom()
 	return nil
+}
+
+func (m *Model) updateTokens() {
+	used, budget := m.Bot.TokenUsage()
+	m.Header.SetTokens(used, budget)
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
@@ -112,7 +148,7 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 
 	case "up", "down":
-		if m.Input.IsEmpty() {
+		if m.Input.IsEmpty() || m.Input.InHistoryMode() {
 			if msg.String() == "up" {
 				m.Input.HistoryUp()
 			} else {
@@ -131,9 +167,6 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if m.Stream.Active() {
-		if msg.String() == "esc" {
-			m.Bot.CancelStream()
-		}
 		return nil
 	}
 
@@ -142,21 +175,29 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		m.Messages.GotoBottom()
 		m.Input.SetFollow(true)
 	case "tab":
-		m.handleTabCompletion()
+		m.cycleSuggestion(1)
 		return nil
+	case "shift+tab":
+		m.cycleSuggestion(-1)
+		return nil
+	case "esc":
 	case "enter":
+		if m.suggestionsVisible {
+			m.acceptSuggestion()
+			return nil
+		}
 		value := m.Input.Value()
 		if value == "" {
 			return nil
 		}
-		m.completions = nil
+		m.suggestionsVisible = false
 		m.Input.AddHistory(value)
 		m.Input.Reset()
 		return m.startChat(value)
 	default:
-		m.completions = nil
 		input, cmd := m.Input.Update(msg)
 		m.Input = input
+		m.refreshSuggestions()
 		return cmd
 	}
 

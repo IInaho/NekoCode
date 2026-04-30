@@ -1,3 +1,4 @@
+// box-drawing 字符集常量：竖线、横线、猫脸图标等 UI 框架元素。
 package styles
 
 import (

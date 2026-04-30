@@ -1,3 +1,5 @@
+// Input 消息输入框：封装 Bubble Tea textarea，含发送历史翻阅（historyActive 状态机）、
+// 发送过渡态（sending prompt）、光标管理。
 package components
 
 import (
@@ -12,13 +14,14 @@ import (
 )
 
 type Input struct {
-	textarea   textarea.Model
-	width      int
-	follow     bool
-	sending    bool
-	history    []string
-	historyIdx int
-	savedInput string
+	textarea      textarea.Model
+	width         int
+	follow        bool
+	sending       bool
+	history       []string
+	historyIdx    int
+	savedInput    string
+	historyActive bool
 }
 
 func NewInput(width int) *Input {
@@ -63,9 +66,14 @@ func (i *Input) SetValue(value string) {
 	i.textarea.SetValue(value)
 }
 
+func (i *Input) SetCursorEnd() {
+	i.textarea.SetCursorColumn(len(i.textarea.Value()))
+}
+
 func (i *Input) Reset() {
 	i.textarea.Reset()
 	i.sending = false
+	i.historyActive = false
 	i.textarea.Prompt = styles.CatEyeStyle.Bold(true).Render(styles.HeavyVert + " ")
 }
 
@@ -91,6 +99,7 @@ func (i *Input) HistoryUp() {
 		i.historyIdx--
 		i.textarea.SetValue(i.history[i.historyIdx])
 	}
+	i.historyActive = true
 }
 
 func (i *Input) HistoryDown() {
@@ -100,9 +109,14 @@ func (i *Input) HistoryDown() {
 	i.historyIdx++
 	if i.historyIdx == len(i.history) {
 		i.textarea.SetValue(i.savedInput)
+		i.historyActive = false
 	} else {
 		i.textarea.SetValue(i.history[i.historyIdx])
 	}
+}
+
+func (i *Input) InHistoryMode() bool {
+	return i.historyActive
 }
 
 func (i *Input) IsEmpty() bool {

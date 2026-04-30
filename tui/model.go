@@ -1,7 +1,10 @@
+// Model 定义、初始化、listenConfirm goroutine。Model 聚合所有 UI 状态：
+// Bot、Header、Messages、Input、Splash、Spinner、Stream、确认、命令提示。
 package tui
 
 import (
 	"primusbot/bot"
+	"primusbot/bot/agent"
 	"primusbot/tui/components"
 
 	"charm.land/bubbles/v2/spinner"
@@ -12,6 +15,10 @@ type doneMsg struct {
 	content          string
 	reasoningContent string
 	err              error
+}
+
+type confirmMsg struct {
+	req agent.ConfirmRequest
 }
 
 type Model struct {
@@ -26,8 +33,13 @@ type Model struct {
 	Ready    bool
 
 	Stream      *StreamState
-	completions   []string
-	completionIdx int
+
+	suggestions      []string
+	suggestionIdx    int
+	suggestionsVisible bool
+
+	PendingConfirm *agent.ConfirmRequest
+	confirmCh      chan agent.ConfirmRequest
 }
 
 const Version = "0.1.0"
@@ -37,9 +49,9 @@ func NewModel() *Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	return &Model{
-		Bot:      b,
-		Header:   components.NewHeader(80, b.Cfg.Provider, b.Cfg.Model, Version),
+	m := &Model{
+		Bot:    b,
+		Header: components.NewHeader(80, b.Cfg.Provider, b.Cfg.Model, Version),
 		Messages: components.NewMessages(80, 14),
 		Input:    components.NewInput(80),
 		Splash:   components.NewSplash(80, 24, Version),
@@ -47,9 +59,30 @@ func NewModel() *Model {
 		Stream:   &StreamState{},
 		Width:    80,
 		Height:   24,
+		confirmCh: make(chan agent.ConfirmRequest),
 	}
+
+	b.SetConfirmFn(func(req agent.ConfirmRequest) bool {
+		m.confirmCh <- req
+		return <-req.Response
+	})
+
+	used, budget := b.TokenUsage()
+	m.Header.SetTokens(used, budget)
+
+	return m
 }
 
 func (m *Model) Init() tea.Cmd {
 	return m.Input.Init()
+}
+
+func listenConfirm(ch <-chan agent.ConfirmRequest) tea.Cmd {
+	return func() tea.Msg {
+		req, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return confirmMsg{req: req}
+	}
 }

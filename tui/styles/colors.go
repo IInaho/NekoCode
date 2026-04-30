@@ -1,3 +1,6 @@
+// 色彩体系：深夜书房主题 — teal 点缀（#4ec9b0）、User 暗金（#c9a96e）、
+// 文字灰阶（#a0/#80/#66）、边框隐入背景（#333333）、猫眼冷蓝（#7ec8e3）。
+// Styles struct + DefaultStyles() + 包级便捷变量。
 package styles
 
 import "charm.land/lipgloss/v2"

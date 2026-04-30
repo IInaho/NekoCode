@@ -1,3 +1,4 @@
+// GlobTool 文件模式匹配，始终 LevelSafe 自动放行。
 package tools
 
 import (
@@ -19,6 +20,10 @@ func (t *GlobTool) Parameters() []Parameter {
 		{Name: "pattern", Type: "string", Required: true, Description: "文件匹配模式"},
 		{Name: "path", Type: "string", Required: false, Description: "搜索目录，默认为当前目录"},
 	}
+}
+
+func (t *GlobTool) DangerLevel(args map[string]interface{}) DangerLevel {
+	return LevelSafe
 }
 
 func (t *GlobTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

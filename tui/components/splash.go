@@ -1,3 +1,5 @@
+// Splash 启动页：ASCII 猫 + 猫眼闪烁动画（blinkCount 驱动）、标题 + 版本号。
+// 按 Enter 进入聊天界面。
 package components
 
 import (

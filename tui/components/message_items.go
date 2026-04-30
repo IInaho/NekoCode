@@ -1,3 +1,5 @@
+// 消息项渲染：UserMessageItem（金色竖线）、AssistantMessageItem（teal 竖线 + 推理 dim 区）、
+// SystemMessageItem（蓝色竖线 ·）、ErrorMessageItem（红色竖线 !），均支持宽度自适应缓存。
 package components
 
 import (

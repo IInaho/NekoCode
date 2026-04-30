@@ -1,3 +1,4 @@
+// ChatMessage 消息模型 + 类型分发：根据 Role 生成对应的 MessageItem（User/Assistant/System/Error）。
 package components
 
 import (

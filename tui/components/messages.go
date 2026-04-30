@@ -1,3 +1,4 @@
+// Messages 消息列表容器：滚动视口管理、消息增删、auto-follow、流式文本/推理文本显示。
 package components
 
 import (

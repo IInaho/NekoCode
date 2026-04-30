@@ -1,3 +1,4 @@
+// 程序入口：创建 Bubble Tea Program，运行主循环。
 package tui
 
 import (

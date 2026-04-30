@@ -1,3 +1,5 @@
+// FileSystemTool 文件读写列表。read/list → LevelSafe 自动放行，
+// write → LevelWrite 需确认。
 package tools
 
 import (
@@ -20,6 +22,16 @@ func (t *FileSystemTool) Parameters() []Parameter {
 		{Name: "operation", Type: "string", Required: true, Description: "操作类型: read, write, list"},
 		{Name: "path", Type: "string", Required: true, Description: "文件路径"},
 		{Name: "content", Type: "string", Required: false, Description: "写入内容(仅write时需要)"},
+	}
+}
+
+func (t *FileSystemTool) DangerLevel(args map[string]interface{}) DangerLevel {
+	op, _ := args["operation"].(string)
+	switch op {
+	case "write":
+		return LevelWrite
+	default:
+		return LevelSafe
 	}
 }
 

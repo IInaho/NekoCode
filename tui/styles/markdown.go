@@ -1,3 +1,5 @@
+// Markdown 渲染器：标题、列表、粗体、斜体、行内代码、代码块着色。
+// RenderMarkdown / RenderMarkdownWithWidth。
 package styles
 
 import (

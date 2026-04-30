@@ -5,7 +5,8 @@ import (
 	"sync"
 )
 
-// StreamState encapsulates the mutable streaming state with safe concurrent access.
+// 流式输出状态管理：线程安全的文本累积、快照读取、变更检测。
+// Agent 回调写入，SpinnerTick 读取渲染，handleDone 停止。
 type StreamState struct {
 	mu        sync.Mutex
 	text      strings.Builder

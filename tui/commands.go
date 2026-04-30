@@ -1,3 +1,5 @@
+// 用户交互调度：startChat（命令 vs Agent 分流）、startAgent（Agent 执行 + 流式回调）、
+// refreshSuggestions / acceptSuggestion / cycleSuggestion（命令提示逻辑）、handleTabCompletion。
 package tui
 
 import (
@@ -17,28 +19,7 @@ func (m *Model) startChat(value string) tea.Cmd {
 		return nil
 	}
 
-	if strings.HasPrefix(value, "@agent") {
-		return m.startAgent(value)
-	}
-
-	m.Messages.AddMessage(components.ChatMessage{Role: "user", Content: value})
-	m.Messages.GotoBottom()
-	m.Input.SetFollow(true)
-	m.Input.SetSending(true)
-	m.Messages.SetProcessing(true)
-	m.Stream.Start()
-
-	return tea.Batch(
-		m.Spinner.Tick,
-		func() tea.Msg {
-			err := m.Bot.Chat(value,
-				func(content, reasoning string) { m.Stream.Append(content, reasoning) },
-				func() {},
-			)
-			content, reasoning := m.Stream.Snapshot()
-			return doneMsg{content: content, reasoningContent: reasoning, err: err}
-		},
-	)
+	return m.startAgent(value)
 }
 
 func (m *Model) startAgent(value string) tea.Cmd {
@@ -48,23 +29,29 @@ func (m *Model) startAgent(value string) tea.Cmd {
 	m.Input.SetSending(true)
 	m.Messages.SetProcessing(true)
 	m.Stream.Start()
+	m.updateTokens()
 
 	return tea.Batch(
 		m.Spinner.Tick,
+		listenConfirm(m.confirmCh),
 		func() tea.Msg {
-			var lastOutput string
+			var finalResponse string
+			var toolSteps []string
 			cw := components.CappedWidth(m.Messages.Width())
-			_, err := m.Bot.RunAgent(value, func(step int, thought, action, toolName, toolArgs, output string) {
-				v := styles.Vertical
-				stepInfo := fmt.Sprintf("\n%s Step %d: %s", v, step+1, thought)
-				stepInfo += fmt.Sprintf("\n%s   Action: %s", v, action)
-				if toolName != "" {
-					stepInfo += fmt.Sprintf("\n%s   Tool: %s(%s)", v, toolName, toolArgs)
-				}
-				stepInfo += fmt.Sprintf("\n%s   Output: %s\n", v, truncate(output, 200))
-				m.Stream.Append(stepInfo, "")
-				lastOutput = output
 
+			_, err := m.Bot.RunAgent(value, func(step int, thought, action, toolName, toolArgs, output string) {
+				if action == "chat" {
+					finalResponse = output
+					return
+				}
+
+				line := fmt.Sprintf("> %s", thought)
+				if toolName != "" {
+					line += fmt.Sprintf(" `%s(%s)`", toolName, truncate(toolArgs, 80))
+				}
+				toolSteps = append(toolSteps, line)
+
+				m.Stream.Append(line+"\n", "")
 				text, _ := m.Stream.Snapshot()
 				m.Messages.SetStreamContentWidth(cw)
 				m.Messages.SetStreamText(styles.RenderMarkdownWithWidth(text, cw))
@@ -73,36 +60,54 @@ func (m *Model) startAgent(value string) tea.Cmd {
 				}
 			})
 
-			content, _ := m.Stream.Snapshot()
-			return doneMsg{content: content, reasoningContent: lastOutput, err: err}
+			if finalResponse == "" {
+				finalResponse = strings.Join(toolSteps, "\n")
+			}
+
+			reasoning := strings.Join(toolSteps, "\n")
+			return doneMsg{content: finalResponse, reasoningContent: reasoning, err: err}
 		},
 	)
 }
 
-func (m *Model) handleTabCompletion() {
+func (m *Model) refreshSuggestions() {
+	m.suggestions = nil
+	m.suggestionIdx = 0
+	m.suggestionsVisible = false
+
 	input := m.Input.Value()
+	if !strings.HasPrefix(input, "/") {
+		return
+	}
 
-	if m.completions == nil {
-		m.completionIdx = 0
-		if strings.HasPrefix(input, "/") {
-			prefix := strings.TrimPrefix(input, "/")
-			for _, name := range m.Bot.CommandNames() {
-				if strings.HasPrefix(name, prefix) {
-					m.completions = append(m.completions, "/"+name)
-				}
-			}
-		} else if strings.HasPrefix(input, "@") {
-			if strings.HasPrefix("agent", strings.TrimPrefix(input, "@")) {
-				m.completions = []string{"@agent"}
-			}
+	prefix := strings.TrimPrefix(input, "/")
+	for _, name := range m.Bot.CommandNames() {
+		if strings.HasPrefix(name, prefix) {
+			m.suggestions = append(m.suggestions, "/"+name)
 		}
-	} else {
-		m.completionIdx = (m.completionIdx + 1) % len(m.completions)
 	}
+	if len(m.suggestions) == 1 && m.suggestions[0] == input {
+		return
+	}
+	if len(m.suggestions) > 0 {
+		m.suggestionsVisible = true
+	}
+}
 
-	if len(m.completions) > 0 {
-		m.Input.SetValue(m.completions[m.completionIdx])
+func (m *Model) acceptSuggestion() {
+	if !m.suggestionsVisible || len(m.suggestions) == 0 {
+		return
 	}
+	m.Input.SetValue(m.suggestions[m.suggestionIdx])
+	m.Input.SetCursorEnd()
+	m.suggestionsVisible = false
+}
+
+func (m *Model) cycleSuggestion(delta int) {
+	if !m.suggestionsVisible || len(m.suggestions) == 0 {
+		return
+	}
+	m.suggestionIdx = (m.suggestionIdx + delta + len(m.suggestions)) % len(m.suggestions)
 }
 
 func truncate(s string, maxLen int) string {

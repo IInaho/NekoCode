@@ -1,3 +1,4 @@
+// ListWidget 通用滚动列表组件：管理 Item 集合、视口滚动、鼠标滚轮支持。
 package components
 
 import (

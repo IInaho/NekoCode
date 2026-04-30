@@ -1,3 +1,4 @@
+// Processing 流式处理指示器：◉ spinner + 流式文本实时渲染，完成后转为 Assistant 消息。
 package components
 
 import (

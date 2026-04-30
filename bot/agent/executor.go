@@ -1,7 +1,12 @@
+// 动作执行：根据 ReasoningResult 调度具体行为。
+// ActionChat → 直接返回文本；ActionExecuteTool → 解析工具调用、
+// 检查 DangerLevel、必要时通过 confirmFn 征求确认、执行工具。
 package agent
 
 import (
-	"strings"
+	"fmt"
+
+	"primusbot/bot/tools"
 )
 
 type ActionResult struct {
@@ -31,13 +36,6 @@ func (a *Agent) Execute(reasoning *ReasoningResult) *ActionResult {
 			Output:  reasoning.ActionInput,
 			IsFinal: true,
 		}
-	case ActionAskClarification:
-		return &ActionResult{
-			Thought: "需要更多信息",
-			Action:  ActionAskClarification,
-			Output:  reasoning.ActionInput,
-			IsFinal: false,
-		}
 	default:
 		return &ActionResult{
 			Thought: "未知操作类型",
@@ -49,41 +47,53 @@ func (a *Agent) Execute(reasoning *ReasoningResult) *ActionResult {
 }
 
 func (a *Agent) executeTool(input string) *ActionResult {
-	if input == "" {
-		return &ActionResult{
-			Thought:     "没有指定要执行的工具",
-			Action:      ActionFinish,
-			Error:       "工具调用格式错误",
-			ShouldRetry: true,
-		}
-	}
-
-	parts := strings.SplitN(input, ":", 2)
-	if len(parts) != 2 {
+	toolName, args, err := tools.ParseCall(input)
+	if err != nil {
 		return &ActionResult{
 			Thought:     "工具调用格式错误",
 			Action:      ActionExecuteTool,
-			Error:       "格式应为: 工具名:参数",
+			Error:       err.Error(),
 			ShouldRetry: true,
 		}
 	}
 
-	toolName := strings.TrimSpace(parts[0])
-	argsStr := strings.TrimSpace(parts[1])
-
-	tool := a.toolRegistry.Get(toolName)
-	if tool == nil {
+	tool, err := a.toolRegistry.Get(toolName)
+	if err != nil {
 		return &ActionResult{
 			Thought:     "工具不存在",
 			Action:      ActionExecuteTool,
-			Error:       "工具不存在: " + toolName,
+			Error:       err.Error(),
 			ShouldRetry: true,
 		}
 	}
 
-	args := parseArguments(argsStr)
+	level := tool.DangerLevel(args)
+	if level == tools.LevelForbidden {
+		return &ActionResult{
+			Thought:     "禁止执行危险操作",
+			Action:      ActionExecuteTool,
+			Error:       fmt.Sprintf("操作被拒绝: %s 属于禁止操作", toolName),
+			ShouldRetry: false,
+		}
+	}
 
-	output, err := tool.Execute(nil, args)
+	if level >= tools.LevelWrite && a.confirmFn != nil {
+		if !a.confirmFn(ConfirmRequest{
+			ToolName: toolName,
+			Args:     args,
+			Level:    level,
+			Response: make(chan bool, 1),
+		}) {
+			return &ActionResult{
+				Thought:     "用户取消了操作",
+				Action:      ActionExecuteTool,
+				Error:       "操作被用户取消",
+				ShouldRetry: false,
+			}
+		}
+	}
+
+	output, err := tool.Execute(a.ctx, args)
 	if err != nil {
 		return &ActionResult{
 			Thought:     "工具执行失败",
@@ -99,23 +109,4 @@ func (a *Agent) executeTool(input string) *ActionResult {
 		Output:  output,
 		IsFinal: false,
 	}
-}
-
-func parseArguments(argsStr string) map[string]interface{} {
-	args := make(map[string]interface{})
-	if argsStr == "" {
-		return args
-	}
-
-	pairs := strings.Split(argsStr, ",")
-	for _, pair := range pairs {
-		kv := strings.SplitN(pair, "=", 2)
-		if len(kv) == 2 {
-			key := strings.TrimSpace(kv[0])
-			value := strings.TrimSpace(kv[1])
-			args[key] = value
-		}
-	}
-
-	return args
 }

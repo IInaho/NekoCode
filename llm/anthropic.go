@@ -28,55 +28,121 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 	}
 }
 
-func (a *Anthropic) SetAPIKey(apiKey string) {
-	a.APIKey = apiKey
+func (a *Anthropic) SetAPIKey(apiKey string) { a.APIKey = apiKey }
+func (a *Anthropic) SetBaseURL(url string)   { a.BaseURL = url }
+
+type anthropicTool struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	InputSchema interface{} `json:"input_schema"`
 }
 
-func (a *Anthropic) SetBaseURL(url string) {
-	a.BaseURL = url
+type anthropicContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
 }
 
 type anthropicRequest struct {
-	Model       string    `json:"model"`
-	MaxTokens   int       `json:"max_tokens"`
-	Temperature float64   `json:"temperature"`
-	Messages    []Message `json:"messages"`
-	Stream      bool      `json:"stream"`
+	Model       string          `json:"model"`
+	MaxTokens   int             `json:"max_tokens"`
+	Temperature float64         `json:"temperature"`
+	System      string          `json:"system,omitempty"`
+	Messages    []anthropicMsg  `json:"messages"`
+	Tools       []anthropicTool `json:"tools,omitempty"`
+	Stream      bool            `json:"stream"`
+}
+
+type anthropicMsg struct {
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
 }
 
 type anthropicResponse struct {
-	ID      string `json:"id"`
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
-	Usage struct {
+	ID      string                  `json:"id"`
+	Content []anthropicContentBlock `json:"content"`
+	Usage   struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
 }
 
-func (a *Anthropic) Chat(ctx context.Context, messages []Message) (*Response, error) {
-	url := fmt.Sprintf("%s/messages", a.BaseURL)
-
-	anthropicMessages := make([]Message, len(messages))
-	for i, msg := range messages {
-		role := msg.Role
-		if role == "system" {
-			role = "user"
-			msg.Content = "System: " + msg.Content
-		}
-		anthropicMessages[i] = Message{
-			Role:    role,
-			Content: msg.Content,
+func toAnthropicTools(tools []ToolDef) []anthropicTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	result := make([]anthropicTool, len(tools))
+	for i, t := range tools {
+		result[i] = anthropicTool{
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			InputSchema: t.Function.Parameters,
 		}
 	}
+	return result
+}
+
+func toAnthropicMessages(messages []Message) ([]anthropicMsg, string) {
+	var systemPrompt string
+	var result []anthropicMsg
+
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			systemPrompt += msg.Content
+			continue
+		}
+
+		role := msg.Role
+
+		if msg.Role == "tool" {
+			result = append(result, anthropicMsg{
+				Role: "user",
+				Content: []anthropicContentBlock{{
+					Type:      "tool_result",
+					ToolUseID: msg.ToolCallID,
+					Content:   msg.Content,
+				}},
+			})
+			continue
+		}
+
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			blocks := make([]anthropicContentBlock, 0, len(msg.ToolCalls)+1)
+			if msg.Content != "" {
+				blocks = append(blocks, anthropicContentBlock{Type: "text", Text: msg.Content})
+			}
+			for _, tc := range msg.ToolCalls {
+				blocks = append(blocks, anthropicContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Function.Name,
+					Input: json.RawMessage(tc.Function.Arguments),
+				})
+			}
+			result = append(result, anthropicMsg{Role: role, Content: blocks})
+			continue
+		}
+
+		result = append(result, anthropicMsg{Role: role, Content: msg.Content})
+	}
+
+	return result, systemPrompt
+}
+
+func (a *Anthropic) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
+	anthropicMsgs, systemPrompt := toAnthropicMessages(messages)
 
 	body := anthropicRequest{
 		Model:       a.Model,
 		MaxTokens:   a.maxTokens,
 		Temperature: a.temperature,
-		Messages:    anthropicMessages,
+		System:      systemPrompt,
+		Messages:    anthropicMsgs,
+		Tools:       toAnthropicTools(tools),
 		Stream:      false,
 	}
 
@@ -85,17 +151,15 @@ func (a *Anthropic) Chat(ctx context.Context, messages []Message) (*Response, er
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.BaseURL+"/messages", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", a.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -105,36 +169,52 @@ func (a *Anthropic) Chat(ctx context.Context, messages []Message) (*Response, er
 	if err != nil {
 		return nil, err
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API error: %s - %s", resp.Status, string(respBody))
 	}
 
-	var anthropicResp anthropicResponse
-	if err := json.Unmarshal(respBody, &anthropicResp); err != nil {
+	var anthResp anthropicResponse
+	if err := json.Unmarshal(respBody, &anthResp); err != nil {
 		return nil, err
 	}
 
-	response := &Response{
-		ID: anthropicResp.ID,
-		Choices: []Choice{
-			{
-				Message: Message{
-					Role:    "assistant",
-					Content: anthropicResp.Content[0].Text,
-				},
-			},
-		},
-		Usage: Usage{
-			PromptTokens:     anthropicResp.Usage.InputTokens,
-			CompletionTokens: anthropicResp.Usage.OutputTokens,
-		},
-	}
-
-	return response, nil
+	return anthropicToResponse(&anthResp), nil
 }
 
-func (a *Anthropic) ChatStream(ctx context.Context, messages []Message) (<-chan StreamToken, <-chan error) {
+func anthropicToResponse(anth *anthropicResponse) *Response {
+	resp := &Response{ID: anth.ID}
+
+	var textContent string
+	var toolCalls []ToolCall
+
+	for _, block := range anth.Content {
+		switch block.Type {
+		case "text":
+			textContent += block.Text
+		case "tool_use":
+			toolCalls = append(toolCalls, ToolCall{
+				ID:   block.ID,
+				Type: "function",
+				Function: FunctionCall{
+					Name:      block.Name,
+					Arguments: string(block.Input),
+				},
+			})
+		}
+	}
+
+	resp.Choices = []Choice{{
+		Message: Message{
+			Role:      "assistant",
+			Content:   textContent,
+			ToolCalls: toolCalls,
+		},
+	}}
+
+	return resp
+}
+
+func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error) {
 	tokenChan := make(chan StreamToken)
 	errChan := make(chan error)
 
@@ -142,43 +222,30 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message) (<-chan 
 		defer close(tokenChan)
 		defer close(errChan)
 
-		url := fmt.Sprintf("%s/messages", a.BaseURL)
-
-		anthropicMessages := make([]Message, len(messages))
-		for i, msg := range messages {
-			role := msg.Role
-			if role == "system" {
-				role = "user"
-				msg.Content = "System: " + msg.Content
-			}
-			anthropicMessages[i] = Message{
-				Role:    role,
-				Content: msg.Content,
-			}
-		}
+		anthropicMsgs, systemPrompt := toAnthropicMessages(messages)
 
 		body := anthropicRequest{
 			Model:       a.Model,
 			MaxTokens:   a.maxTokens,
 			Temperature: a.temperature,
-			Messages:    anthropicMessages,
+			System:      systemPrompt,
+			Messages:    anthropicMsgs,
+			Tools:       toAnthropicTools(tools),
 			Stream:      true,
 		}
 
 		jsonBody, _ := json.Marshal(body)
 
-		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+		req, err := http.NewRequestWithContext(ctx, "POST", a.BaseURL+"/messages", bytes.NewBuffer(jsonBody))
 		if err != nil {
 			errChan <- err
 			return
 		}
-
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-api-key", a.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 
-		client := &http.Client{Timeout: 0}
-		resp, err := client.Do(req)
+		resp, err := (&http.Client{Timeout: 0}).Do(req)
 		if err != nil {
 			errChan <- err
 			return
@@ -194,7 +261,6 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message) (<-chan 
 				}
 				return
 			}
-
 			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
 				tokenChan <- StreamToken{Content: chunk.Choices[0].Delta.Content}
 			}

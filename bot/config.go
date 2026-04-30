@@ -1,4 +1,6 @@
-package config
+// 配置管理：从 ~/.primusbot/config.json 加载 provider / api_key / model / base_url。
+// 文件不存在时返回默认配置（openai / gpt-4）。
+package bot
 
 import (
 	"encoding/json"
@@ -38,23 +40,4 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
-}
-
-func (c *Config) Save() error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Join(homeDir, ".primusbot")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(filepath.Join(dir, "config.json"), data, 0644)
 }

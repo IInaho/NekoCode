@@ -1,4 +1,7 @@
-package command
+// 命令系统：以 "/" 为前缀的斜杠命令解析和分发。
+// Parser 维护 name → handler 映射，RegisterDefaultCommands 注册内置命令。
+// CommandCallbacks 提供命令所需的依赖注入。
+package bot
 
 import (
 	"strings"
@@ -36,64 +39,40 @@ func (p *Parser) Commands() []string {
 
 func (p *Parser) Parse(input string) *Command {
 	trimmed := strings.TrimSpace(input)
-
 	if !strings.HasPrefix(trimmed, "/") {
-		return &Command{
-			Name: "",
-			Raw:  input,
-		}
+		return &Command{Name: "", Raw: input}
 	}
-
 	parts := strings.Fields(trimmed)
 	if len(parts) == 0 {
-		return &Command{
-			Name: "",
-			Raw:  input,
-		}
+		return &Command{Name: "", Raw: input}
 	}
-
 	name := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
 	args := []string{}
 	if len(parts) > 1 {
 		args = parts[1:]
 	}
-
-	remaining := trimmed[len(parts[0]):]
-	if len(remaining) > 0 {
-		remaining = strings.TrimSpace(remaining[len(parts[0]):])
-		if remaining != "" && len(args) == 0 {
-		}
-	}
-
-	return &Command{
-		Name: name,
-		Args: args,
-		Raw:  input,
-	}
+	return &Command{Name: name, Args: args, Raw: input}
 }
 
 func (p *Parser) Execute(cmd *Command) (string, bool) {
 	if cmd.Name == "" {
 		return "", false
 	}
-
 	handler, exists := p.handlers[cmd.Name]
 	if !exists {
 		return "Unknown command: /" + cmd.Name + ". Type /help for available commands.", true
 	}
-
 	return handler(cmd)
 }
 
 func RegisterDefaultCommands(p *Parser, callbacks *CommandCallbacks) {
 	p.Register("help", func(cmd *Command) (string, bool) {
 		return `Available commands:
-  /help          Show this help message
-  /clear         Clear conversation history
-  /model <name>  Switch to a different model
-  /config        Show current configuration
-  /quit          Exit the application
-  /<text>        Send a message to the AI
+  /help        Show this help message
+  /clear       Clear conversation history
+  /stats       Show context stats (messages, tokens, summary)
+  /summarize   Force context compression now
+  /config      Show current provider and model
 `, true
 	})
 
@@ -104,18 +83,22 @@ func RegisterDefaultCommands(p *Parser, callbacks *CommandCallbacks) {
 		return "Conversation history cleared.", true
 	})
 
-	p.Register("quit", func(cmd *Command) (string, bool) {
-		if callbacks.Quit != nil {
-			callbacks.Quit()
+	p.Register("stats", func(cmd *Command) (string, bool) {
+		if callbacks.ContextStats != nil {
+			return callbacks.ContextStats(), true
 		}
-		return "", true
+		return "Stats unavailable", true
 	})
 
-	p.Register("exit", func(cmd *Command) (string, bool) {
-		if callbacks.Quit != nil {
-			callbacks.Quit()
+	p.Register("summarize", func(cmd *Command) (string, bool) {
+		if callbacks.ForceSummarize != nil {
+			result, err := callbacks.ForceSummarize()
+			if err != nil {
+				return "Summarize failed: " + err.Error(), true
+			}
+			return result, true
 		}
-		return "", true
+		return "Summarize unavailable", true
 	})
 
 	p.Register("config", func(cmd *Command) (string, bool) {
@@ -124,50 +107,11 @@ func RegisterDefaultCommands(p *Parser, callbacks *CommandCallbacks) {
 		}
 		return "", true
 	})
-
-	p.Register("model", func(cmd *Command) (string, bool) {
-		if len(cmd.Args) > 0 && callbacks.SetModel != nil {
-			callbacks.SetModel(cmd.Args[0])
-			return "Model switched to " + cmd.Args[0], true
-		}
-		return "Usage: /model <model-name>", true
-	})
 }
 
 type CommandCallbacks struct {
-	ClearHistory func()
-	Quit         func()
-	GetConfig    func() string
-	SetModel     func(model string)
-}
-
-func Parse(input string) *Command {
-	trimmed := strings.TrimSpace(input)
-
-	if !strings.HasPrefix(trimmed, "/") {
-		return &Command{
-			Name: "",
-			Raw:  input,
-		}
-	}
-
-	parts := strings.Fields(trimmed)
-	if len(parts) == 0 {
-		return &Command{
-			Name: "",
-			Raw:  input,
-		}
-	}
-
-	name := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
-	args := []string{}
-	if len(parts) > 1 {
-		args = parts[1:]
-	}
-
-	return &Command{
-		Name: name,
-		Args: args,
-		Raw:  input,
-	}
+	ClearHistory   func()
+	GetConfig      func() string
+	ForceSummarize func() (string, error)
+	ContextStats   func() string
 }

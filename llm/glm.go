@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 )
@@ -32,31 +31,20 @@ func NewGLM(apiKey, baseURL, model string) *GLM {
 	}
 }
 
-func (g *GLM) SetAPIKey(apiKey string) {
-	g.APIKey = apiKey
-}
+func (g *GLM) SetAPIKey(apiKey string) { g.APIKey = apiKey }
+func (g *GLM) SetBaseURL(url string)   { g.BaseURL = url }
 
-func (g *GLM) SetBaseURL(url string) {
-	g.BaseURL = url
-}
-
-type glmRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Temperature float64   `json:"temperature,omitempty"`
-	Stream      bool      `json:"stream,omitempty"`
-}
-
-func (g *GLM) Chat(ctx context.Context, messages []Message) (*Response, error) {
-	url := fmt.Sprintf("%s/chat/completions", g.BaseURL)
-
-	body := glmRequest{
-		Model:       g.Model,
-		Messages:    messages,
-		MaxTokens:   g.maxTokens,
-		Temperature: g.temperature,
-		Stream:      false,
+func (g *GLM) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
+	body := map[string]interface{}{
+		"model":       g.Model,
+		"messages":    messages,
+		"max_tokens":  g.maxTokens,
+		"temperature": g.temperature,
+		"stream":      false,
+	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -64,16 +52,14 @@ func (g *GLM) Chat(ctx context.Context, messages []Message) (*Response, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", g.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", g.APIKey))
 
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +69,6 @@ func (g *GLM) Chat(ctx context.Context, messages []Message) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
@@ -96,31 +81,31 @@ func (g *GLM) Chat(ctx context.Context, messages []Message) (*Response, error) {
 	return &response, nil
 }
 
-func (g *GLM) ChatStream(ctx context.Context, messages []Message) (<-chan StreamToken, <-chan error) {
-	url := fmt.Sprintf("%s/chat/completions", g.BaseURL)
-
-	body := glmRequest{
-		Model:       g.Model,
-		Messages:    messages,
-		MaxTokens:   g.maxTokens,
-		Temperature: g.temperature,
-		Stream:      true,
+func (g *GLM) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error) {
+	body := map[string]interface{}{
+		"model":       g.Model,
+		"messages":    messages,
+		"max_tokens":  g.maxTokens,
+		"temperature": g.temperature,
+		"stream":      true,
+	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
 	}
 
 	jsonBody, _ := json.Marshal(body)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", g.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		errChan := make(chan error, 1)
 		errChan <- err
 		return nil, errChan
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", g.APIKey))
 
-	client := &http.Client{Timeout: 0}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 0}).Do(req)
 	if err != nil {
 		errChan := make(chan error, 1)
 		errChan <- err
@@ -150,13 +135,10 @@ func (g *GLM) ChatStream(ctx context.Context, messages []Message) (<-chan Stream
 				}
 				return
 			}
-
 			if chunk == nil || len(chunk.Choices) == 0 {
 				continue
 			}
-
 			delta := chunk.Choices[0].Delta
-			log.Printf("GLM delta: content=%q reasoning=%q", delta.Content, delta.ReasoningContent)
 			if delta.Content != "" || delta.ReasoningContent != "" {
 				tokenChan <- StreamToken{
 					Content:          delta.Content,
