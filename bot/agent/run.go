@@ -5,6 +5,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"primusbot/bot/tools"
 )
@@ -36,20 +37,19 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 
 		result := a.Execute(reasoning)
 
-		// Persist tool interaction in conversation history so future turns see it.
-		if reasoning.Action == ActionExecuteTool {
-			a.ctxMgr.Add("user", "[工具调用: "+reasoning.ActionInput+"]")
-			if result.Error != "" {
-				a.ctxMgr.Add("user", "[工具错误: "+result.Error+"]")
-			} else {
-				a.ctxMgr.Add("user", "[工具结果]\n"+result.Output)
-			}
-		}
-
 		toolName, toolArgs := "", ""
 		if name, args, err := tools.ParseCall(reasoning.ActionInput); err == nil {
 			toolName = name
 			toolArgs = formatArgs(args)
+		}
+
+		// Persist tool interaction in conversation history so future turns see it.
+		if reasoning.Action == ActionExecuteTool {
+			toolOutput := result.Output
+			if result.Error != "" {
+				toolOutput = result.Error
+			}
+			a.ctxMgr.AddToolResult(reasoning.ToolCallID, toolOutput)
 		}
 		if callback != nil {
 			callback(a.currentStep, reasoning.Thought, reasoning.Action.String(), toolName, toolArgs, result.Output)
@@ -60,7 +60,7 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 		if shouldStop {
 			a.finished = true
 			if result.Action == ActionChat || result.Action == ActionFinish {
-				a.ctxMgr.Add("assistant", result.Output)
+				a.ctxMgr.AddAssistantResponse(result.Output, a.lastReasoningContent)
 			}
 			return &RunResult{
 				FinalOutput: result.Output,
@@ -94,12 +94,32 @@ func formatArgs(args map[string]interface{}) string {
 	if len(args) == 0 {
 		return ""
 	}
-	s := ""
+	var pairs []string
 	for k, v := range args {
-		if s != "" {
-			s += ","
+		val := fmt.Sprint(v)
+		if strings.ContainsAny(val, ",=\"") {
+			escaped := strings.ReplaceAll(val, "\\", "\\\\")
+			escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+			val = `"` + escaped + `"`
 		}
-		s += k + "=" + fmt.Sprint(v)
+		pairs = append(pairs, k+"="+val)
 	}
-	return s
+	return strings.Join(pairs, ",")
+}
+
+func (a *Agent) Feedback(state *stepState, result *ActionResult) (*stepState, bool, bool) {
+	a.currentStep++
+	shouldStop := result.IsFinal || a.currentStep >= a.maxIterations
+	shouldRetry := result.ShouldRetry && a.currentStep < a.maxIterations
+
+	newState := &stepState{
+		input:          state.input,
+		previousAction: result.Action.String(),
+		previousOutput: result.Output,
+		success:        result.Error == "",
+	}
+	if result.Error != "" && result.ShouldRetry {
+		newState.retryCount = state.retryCount + 1
+	}
+	return newState, shouldRetry, shouldStop
 }

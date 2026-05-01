@@ -3,11 +3,12 @@ package llm
 import "context"
 
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	Name             string     `json:"name,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
 type ToolCall struct {
@@ -50,9 +51,6 @@ type StreamChunk struct {
 		Delta        Delta  `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
 }
 
 type StreamToken struct {
@@ -90,9 +88,3 @@ type LLM interface {
 	SetBaseURL(url string)
 }
 
-func LastToolCalls(resp *Response) []ToolCall {
-	if resp == nil || len(resp.Choices) == 0 {
-		return nil
-	}
-	return resp.Choices[0].Message.ToolCalls
-}

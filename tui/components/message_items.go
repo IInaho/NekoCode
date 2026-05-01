@@ -1,5 +1,3 @@
-// 消息项渲染：UserMessageItem（金色竖线）、AssistantMessageItem（teal 竖线 + 推理 dim 区）、
-// SystemMessageItem（蓝色竖线 ·）、ErrorMessageItem（红色竖线 !），均支持宽度自适应缓存。
 package components
 
 import (
@@ -7,8 +5,6 @@ import (
 	"sync"
 
 	"primusbot/tui/styles"
-
-	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -26,7 +22,6 @@ func cappedWidth(available int) int {
 	return min(available-messageLeftPadding, maxTextWidth)
 }
 
-// CappedWidth returns the maximum text content width for a given available width.
 func CappedWidth(available int) int {
 	return cappedWidth(available)
 }
@@ -34,17 +29,14 @@ func CappedWidth(available int) int {
 // --- UserMessageItem ---
 
 type UserMessageItem struct {
-	id      string
 	content string
 	sty     *styles.Styles
 	cache   cachedRender
 }
 
-func NewUserMessageItem(sty *styles.Styles, id, content string) *UserMessageItem {
-	return &UserMessageItem{id: id, content: content, sty: sty}
+func NewUserMessageItem(sty *styles.Styles, content string) *UserMessageItem {
+	return &UserMessageItem{content: content, sty: sty}
 }
-
-func (m *UserMessageItem) ID() string { return m.id }
 
 func (m *UserMessageItem) Render(width int) string {
 	cw := cappedWidth(width)
@@ -72,30 +64,23 @@ func (m *UserMessageItem) Render(width int) string {
 }
 
 func (m *UserMessageItem) Height(width int) int {
-	cw := cappedWidth(width)
-	if m.cache.width == cw {
-		return m.cache.height
-	}
 	return strings.Count(m.Render(width), "\n") + 1
 }
 
 // --- AssistantMessageItem ---
 
 type AssistantMessageItem struct {
-	id               string
-	content          string
-	reasoningContent string
-	renderedContent  string
+	content         string
+	renderedContent string
+	blocks           []ContentBlock
 	sty              *styles.Styles
 	cache            cachedRender
 	mu               sync.Mutex
 }
 
-func NewAssistantMessageItem(sty *styles.Styles, id, content string) *AssistantMessageItem {
-	return &AssistantMessageItem{id: id, content: content, sty: sty}
+func NewAssistantMessageItem(sty *styles.Styles, content string) *AssistantMessageItem {
+	return &AssistantMessageItem{content: content, sty: sty}
 }
-
-func (m *AssistantMessageItem) ID() string { return m.id }
 
 func (m *AssistantMessageItem) SetRenderedContent(content string) {
 	m.mu.Lock()
@@ -104,12 +89,13 @@ func (m *AssistantMessageItem) SetRenderedContent(content string) {
 	m.cache = cachedRender{}
 }
 
-func (m *AssistantMessageItem) SetReasoningContent(reasoning string) {
+func (m *AssistantMessageItem) SetBlocks(blocks []ContentBlock) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.reasoningContent = reasoning
+	m.blocks = blocks
 	m.cache = cachedRender{}
 }
+
 
 func (m *AssistantMessageItem) Render(width int) string {
 	m.mu.Lock()
@@ -117,68 +103,51 @@ func (m *AssistantMessageItem) Render(width int) string {
 
 	cw := cappedWidth(width)
 
-	if m.cache.width == cw && m.cache.rendered != "" {
-		return m.cache.rendered
-	}
+	green := m.sty.Green.Render(styles.Vertical)
+	var sb strings.Builder
+	sb.WriteString(green + " " + m.sty.Primary.Bold(true).Render("Assistant") + "\n")
 
-	dimGreen := lipgloss.NewStyle().Foreground(lipgloss.Color("#3a6a5a"))
-
-	var s strings.Builder
-	s.WriteString(m.sty.Green.Render(styles.Vertical+" ") + m.sty.Primary.Bold(true).Render("Assistant") + "\n")
-
-	if m.reasoningContent != "" {
-		thinkingRendered := styles.RenderMarkdownWithWidth(m.reasoningContent, cw)
-		lines := strings.Split(thinkingRendered, "\n")
-		for _, line := range lines {
-			s.WriteString(dimGreen.Render(styles.Vertical+" ") + m.sty.Subtle.Render(line) + "\n")
+	// Render content blocks (tool calls, thinking, etc.)
+	for _, b := range m.blocks {
+		rendered := RenderBlock(b, cw, m.sty)
+		for _, line := range strings.Split(rendered, "\n") {
+			sb.WriteString(green + " " + line + "\n")
 		}
-		s.WriteString(m.sty.Green.Render(styles.Vertical) + "\n")
 	}
 
+	// Render final text response
+	sb.WriteString(green + "\n")
 	content := m.content
 	if m.renderedContent != "" {
 		content = m.renderedContent
 	}
 	content = strings.TrimSpace(content)
 	content = styles.RenderMarkdownWithWidth(content, cw)
-
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		s.WriteString(m.sty.Green.Render(styles.Vertical+" ") + line + "\n")
+	for _, line := range strings.Split(content, "\n") {
+		sb.WriteString(green + " " + line + "\n")
 	}
 
-	out := strings.TrimRight(s.String(), "\n")
-	m.cache.rendered = out
-	m.cache.width = cw
-	m.cache.height = strings.Count(out, "\n") + 1
-	return m.cache.rendered
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func (m *AssistantMessageItem) Height(width int) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cw := cappedWidth(width)
-	if m.cache.width == cw {
-		return m.cache.height
-	}
 	return strings.Count(m.Render(width), "\n") + 1
 }
 
 // --- SystemMessageItem ---
 
 type SystemMessageItem struct {
-	id              string
 	content         string
 	renderedContent string
 	sty             *styles.Styles
 	cache           cachedRender
 }
 
-func NewSystemMessageItem(sty *styles.Styles, id, content string) *SystemMessageItem {
-	return &SystemMessageItem{id: id, content: content, sty: sty}
+func NewSystemMessageItem(sty *styles.Styles, content string) *SystemMessageItem {
+	return &SystemMessageItem{content: content, sty: sty}
 }
-
-func (m *SystemMessageItem) ID() string { return m.id }
 
 func (m *SystemMessageItem) SetRenderedContent(content string) {
 	m.renderedContent = content
@@ -198,7 +167,7 @@ func (m *SystemMessageItem) Render(width int) string {
 	}
 
 	var s strings.Builder
-	s.WriteString(m.sty.Blue.Render(styles.Vertical+" ") + m.sty.Blue.Bold(true).Render("·") + " " + content)
+	s.WriteString(m.sty.Blue.Render(styles.Vertical+" ") + m.sty.Blue.Bold(true).Render(".") + " " + content)
 
 	out := s.String()
 	m.cache.rendered = out
@@ -208,27 +177,20 @@ func (m *SystemMessageItem) Render(width int) string {
 }
 
 func (m *SystemMessageItem) Height(width int) int {
-	cw := cappedWidth(width)
-	if m.cache.width == cw {
-		return m.cache.height
-	}
 	return strings.Count(m.Render(width), "\n") + 1
 }
 
 // --- ErrorMessageItem ---
 
 type ErrorMessageItem struct {
-	id      string
 	content string
 	sty     *styles.Styles
 	cache   cachedRender
 }
 
-func NewErrorMessageItem(sty *styles.Styles, id, content string) *ErrorMessageItem {
-	return &ErrorMessageItem{id: id, content: content, sty: sty}
+func NewErrorMessageItem(sty *styles.Styles, content string) *ErrorMessageItem {
+	return &ErrorMessageItem{content: content, sty: sty}
 }
-
-func (m *ErrorMessageItem) ID() string { return m.id }
 
 func (m *ErrorMessageItem) Render(width int) string {
 	cw := cappedWidth(width)
@@ -250,9 +212,5 @@ func (m *ErrorMessageItem) Render(width int) string {
 }
 
 func (m *ErrorMessageItem) Height(width int) int {
-	cw := cappedWidth(width)
-	if m.cache.width == cw {
-		return m.cache.height
-	}
 	return strings.Count(m.Render(width), "\n") + 1
 }

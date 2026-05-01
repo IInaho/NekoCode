@@ -1,5 +1,3 @@
-// FileSystemTool 文件读写列表。read/list → LevelSafe 自动放行，
-// write → LevelWrite 需确认。
 package tools
 
 import (
@@ -72,15 +70,28 @@ func (t *FileSystemTool) Execute(ctx context.Context, args map[string]interface{
 		var result string
 		for _, e := range entries {
 			if e.IsDir() {
-				result += fmt.Sprintf("d %s/\n", e.Name())
+				result += fmt.Sprintf("▸ %s/\n", e.Name())
 			} else {
 				info, _ := e.Info()
-				result += fmt.Sprintf("- %s (%d bytes)\n", e.Name(), info.Size())
+				result += fmt.Sprintf("  %s  %s\n", e.Name(), humanSize(info.Size()))
 			}
 		}
 		return result, nil
 
 	default:
 		return "", fmt.Errorf("unknown operation: %s", operation)
+	}
+}
+
+func humanSize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1fM", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1fK", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%dB", n)
 	}
 }

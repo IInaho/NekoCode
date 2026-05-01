@@ -1,4 +1,3 @@
-// Messages 消息列表容器：滚动视口管理、消息增删、auto-follow、流式文本/推理文本显示。
 package components
 
 import (
@@ -25,8 +24,7 @@ type Messages struct {
 	mu             sync.Mutex
 }
 
-func NewMessages(width, height int) *Messages {
-	sty := styles.DefaultStyles()
+func NewMessages(width, height int, sty *styles.Styles) *Messages {
 	l := NewList()
 	l.SetSize(width, height)
 	l.SetGap(1)
@@ -34,7 +32,7 @@ func NewMessages(width, height int) *Messages {
 	return &Messages{
 		List:   l,
 		Follow: true,
-		sty:    &sty,
+		sty:    sty,
 	}
 }
 
@@ -61,31 +59,6 @@ func (m *Messages) SetProcessing(processing bool) {
 	m.mu.Unlock()
 }
 
-func (m *Messages) SetStreamText(text string) {
-	m.mu.Lock()
-	if m.processingItem != nil {
-		m.processingItem.SetStreamText(text)
-		m.Invalidate()
-	}
-	m.mu.Unlock()
-}
-
-func (m *Messages) SetReasoningText(text string) {
-	m.mu.Lock()
-	if m.processingItem != nil {
-		m.processingItem.SetThinkingText(text)
-		m.Invalidate()
-	}
-	m.mu.Unlock()
-}
-
-func (m *Messages) SetStreamContentWidth(width int) {
-	m.mu.Lock()
-	if m.processingItem != nil {
-		m.processingItem.SetContentWidth(width)
-	}
-	m.mu.Unlock()
-}
 
 func (m *Messages) SetSpinnerView(view string) {
 	m.mu.Lock()
@@ -95,9 +68,26 @@ func (m *Messages) SetSpinnerView(view string) {
 	m.mu.Unlock()
 }
 
+func (m *Messages) SetProcessingStatus(text string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.SetStatusText(text)
+		m.Invalidate()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) SetBlocks(blocks []ContentBlock) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.SetBlocks(blocks)
+		m.Invalidate()
+	}
+	m.mu.Unlock()
+}
+
 func (m *Messages) AddMessage(msg ChatMessage) {
-	id := generateID(m.Len())
-	item := msg.ToMessageItem(m.sty, id)
+	item := msg.ToMessageItem(m.sty)
 	m.AppendItems(item)
 	if m.Follow {
 		m.ScrollToBottom()
@@ -113,6 +103,31 @@ func (m *Messages) SetFollow(follow bool) {
 func (m *Messages) GotoBottom() {
 	m.ScrollToBottom()
 	m.SetFollow(true)
+}
+
+func (m *Messages) ToggleLastAssistant() {
+	items := m.Items()
+	for i := len(items) - 1; i >= 0; i-- {
+		a, ok := items[i].(*AssistantMessageItem)
+		if !ok || len(a.blocks) == 0 {
+			continue
+		}
+		// If any tool block is collapsed, expand all; otherwise collapse all.
+		expand := false
+		for _, b := range a.blocks {
+			if b.Type == BlockToolCall && b.Collapsed {
+				expand = true
+				break
+			}
+		}
+		for j := range a.blocks {
+			if a.blocks[j].Type == BlockToolCall {
+				a.blocks[j].Collapsed = !expand
+			}
+		}
+		m.Invalidate()
+		return
+	}
 }
 
 func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
@@ -154,7 +169,8 @@ func (m *Messages) View() string {
 		return content
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, content, scrollbar)
+	filled := lipgloss.NewStyle().Width(m.Width()).Render(content)
+	return lipgloss.JoinHorizontal(lipgloss.Top, filled, scrollbar)
 }
 
 func (m *Messages) renderScrollbar() string {
@@ -187,12 +203,4 @@ func (m *Messages) renderScrollbar() string {
 	}
 
 	return sb.String()
-}
-
-func generateID(index int) string {
-	const digits = "abcdefghijklmnopqrstuvwxyz0123456789"
-	if index < len(digits) {
-		return string(digits[index])
-	}
-	return generateID(index/len(digits)) + string(digits[index%len(digits)])
 }

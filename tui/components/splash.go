@@ -32,8 +32,8 @@ func (s *Splash) Blink() {
 }
 
 func (s *Splash) View() string {
-	w := maxInt(60, s.width)
-	h := maxInt(20, s.height)
+	w := max(60, s.width)
+	h := max(20, s.height)
 
 	center := lipgloss.NewStyle().Width(w).Align(lipgloss.Center)
 	cat := s.renderCat()
@@ -51,7 +51,7 @@ func (s *Splash) View() string {
 			maxCatW = cw
 		}
 	}
-	catPad := maxInt(0, (w-maxCatW)/2)
+	catPad := max(0, (w-maxCatW)/2)
 	for _, l := range catLines {
 		lines = append(lines, strings.Repeat(" ", catPad)+l)
 	}
@@ -68,7 +68,7 @@ func (s *Splash) View() string {
 
 	// Input.Height()=5 + 2 separator lines in tui.go View().
 	reserved := 7
-	topPad := maxInt(0, (h-reserved-contentH)/2)
+	topPad := max(0, (h-reserved-contentH)/2)
 
 	var b strings.Builder
 	for i := 0; i < topPad; i++ {

@@ -33,9 +33,7 @@ func (m *Model) startAgent(value string) tea.Cmd {
 	m.Messages.AddMessage(components.ChatMessage{Role: "user", Content: value})
 	m.Messages.GotoBottom()
 	m.Input.SetFollow(true)
-	m.Input.SetSending(true)
-	m.Messages.SetProcessing(true)
-	m.Stream.Start()
+	m.transitionTo(StateProcessing)
 	m.updateTokens()
 
 	return tea.Batch(
@@ -49,9 +47,7 @@ func (m *Model) startAgent(value string) tea.Cmd {
 			}()
 
 			var finalResponse string
-			var toolNames []string
 			var diffs []string
-			cw := components.CappedWidth(m.Messages.Width())
 
 			_, err := m.Bot.RunAgent(value, func(step int, thought, action, toolName, toolArgs, output string) {
 				if action == "chat" {
@@ -60,106 +56,103 @@ func (m *Model) startAgent(value string) tea.Cmd {
 				}
 
 				if toolName != "" {
-					toolNames = append(toolNames, toolName)
 					if toolName == "edit" && output != "" {
 						diffs = append(diffs, output)
 					}
-				}
-
-				// Stream tool call.
-				line := fmt.Sprintf("> %s", thought)
-				if toolName != "" {
-					line += fmt.Sprintf(" `%s(%s)`", toolName, truncate(toolArgs, 80))
-				}
-				m.Stream.Append(line+"\n", "")
-
-				if output != "" {
-					out := truncate(output, 600)
-					m.Stream.Append(out+"\n", "")
-				}
-
-				text, _ := m.Stream.Snapshot()
-				m.Messages.SetStreamContentWidth(cw)
-				m.Messages.SetStreamText(styles.RenderMarkdownWithWidth(text, cw))
-				if m.Messages.Follow {
-					m.Messages.GotoBottom()
+					block := components.ContentBlock{
+						Type:      components.BlockToolCall,
+						ToolName:  toolName,
+						ToolArgs:  formatBriefArgs(toolName, toolArgs),
+						Collapsed: true,
+					}
+					if output != "" {
+						block.Content = styles.RenderMarkdownWithWidth(truncate(output, 600), components.CappedWidth(m.Messages.Width()))
+					}
+					m.Stream.Append(block)
 				}
 			})
 
 			if finalResponse == "" {
-				finalResponse = "抱歉，无法完成这个任务。"
+				finalResponse = "sorry, could not complete this task."
 			}
 
 			return doneMsg{
-				content:          finalResponse,
-				reasoningContent: toolSummary(toolNames),
-				diffBlocks:       strings.Join(diffs, "\n"),
-				err:              err,
+				content:    finalResponse,
+				diffBlocks: strings.Join(diffs, "\n"),
+				err:        err,
 			}
 		},
 	)
 }
 
-func toolSummary(names []string) string {
-	if len(names) == 0 {
+// formatBriefArgs extracts key identifying args for a clean one-line tool display.
+func formatBriefArgs(toolName, toolArgs string) string {
+	// Parse flat key=value pairs (may contain quoted values).
+	parse := func(s string) map[string]string {
+		m := make(map[string]string)
+		for _, pair := range splitArgPairs(s) {
+			kv := strings.SplitN(pair, "=", 2)
+			if len(kv) == 2 {
+				m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+			}
+		}
+		return m
+	}
+	args := parse(toolArgs)
+
+	switch toolName {
+	case "filesystem":
+		op := args["operation"]
+		path := args["path"]
+		if op != "" && path != "" {
+			return op + " " + path
+		}
+		return path
+	case "edit":
+		return args["path"]
+	case "bash":
+		cmd := args["command"]
+		if len(cmd) > 50 {
+			cmd = cmd[:47] + "..."
+		}
+		return cmd
+	case "glob":
+		return args["pattern"]
+	case "grep":
+		pat := args["pattern"]
+		p := args["path"]
+		if p != "" {
+			return pat + " " + p
+		}
+		return pat
+	default:
+		// Show first non-empty value.
+		for _, v := range args {
+			if len(v) > 30 {
+				v = v[:27] + "..."
+			}
+			return v
+		}
 		return ""
 	}
-	seen := make(map[string]bool)
-	var unique []string
-	for _, n := range names {
-		if !seen[n] {
-			seen[n] = true
-			unique = append(unique, n)
-		}
-	}
-	return fmt.Sprintf("%d tool%s · %s", len(names), s(len(names)), strings.Join(unique, " → "))
 }
 
-func s(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
-}
+
+
 
 func (m *Model) refreshSuggestions() {
-	m.suggestions = nil
-	m.suggestionIdx = 0
-	m.suggestionsVisible = false
-
-	input := m.Input.Value()
-	if !strings.HasPrefix(input, "/") {
-		return
-	}
-
-	prefix := strings.TrimPrefix(input, "/")
-	for _, name := range m.Bot.CommandNames() {
-		if strings.HasPrefix(name, prefix) {
-			m.suggestions = append(m.suggestions, "/"+name)
-		}
-	}
-	if len(m.suggestions) == 1 && m.suggestions[0] == input {
-		return
-	}
-	if len(m.suggestions) > 0 {
-		m.suggestionsVisible = true
-	}
+	m.Suggestions.Refresh(m.Input.Value(), m.Bot.CommandNames())
 }
 
 func (m *Model) acceptSuggestion() {
-	if !m.suggestionsVisible || len(m.suggestions) == 0 {
-		return
+	if val := m.Suggestions.Accept(); val != "" {
+		m.Input.SetValue(val)
+		m.Input.SetCursorEnd()
 	}
-	m.Input.SetValue(m.suggestions[m.suggestionIdx])
-	m.Input.SetCursorEnd()
-	m.suggestionsVisible = false
 }
 
 func (m *Model) cycleSuggestion(delta int) {
-	if !m.suggestionsVisible || len(m.suggestions) == 0 {
-		return
-	}
-	m.suggestionIdx = (m.suggestionIdx + delta + len(m.suggestions)) % len(m.suggestions)
+	m.Suggestions.Cycle(delta)
 }
 
 func truncate(s string, maxLen int) string {
@@ -167,4 +160,27 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func splitArgPairs(s string) []string {
+	var pairs []string
+	start := 0
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			inQuote = !inQuote
+		case '\\':
+			if inQuote && i+1 < len(s) {
+				i++
+			}
+		case ',':
+			if !inQuote {
+				pairs = append(pairs, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	pairs = append(pairs, s[start:])
+	return pairs
 }

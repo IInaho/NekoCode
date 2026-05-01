@@ -115,13 +115,6 @@ func (i *Input) HistoryDown() {
 	}
 }
 
-func (i *Input) InHistoryMode() bool {
-	return i.historyActive
-}
-
-func (i *Input) IsEmpty() bool {
-	return strings.TrimSpace(i.textarea.Value()) == ""
-}
 
 func (i *Input) SetSending(sending bool) {
 	i.sending = sending
@@ -151,7 +144,7 @@ func (i *Input) Update(msg tea.Msg) (*Input, tea.Cmd) {
 }
 
 func (i *Input) View() string {
-	w := maxInt(20, i.width)
+	w := max(20, i.width)
 	line := strings.Repeat(styles.Horizontal, w)
 
 	followText := "Auto"
@@ -164,7 +157,7 @@ func (i *Input) View() string {
 		styles.GreenStyle.Render(followText)
 	footerW := lipgloss.Width(footer)
 	end := styles.BorderStyle.Render(styles.Vertical)
-	pad := maxInt(0, w-footerW-lipgloss.Width(end))
+	pad := max(0, w-footerW-lipgloss.Width(end))
 
 	var b strings.Builder
 	b.WriteString(styles.BorderStyle.Render(line) + "\n")

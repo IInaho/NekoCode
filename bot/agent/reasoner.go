@@ -23,10 +23,14 @@ type ReasoningResult struct {
 	Thought     string
 	Action      ActionType
 	ActionInput string
+	ToolCallID  string
 	IsFinal     bool
 }
 
 func (a *Agent) Reason(state *stepState) *ReasoningResult {
+	if a.phaseFn != nil {
+		a.phaseFn("Thinking")
+	}
 	if strings.HasPrefix(state.input, "/") {
 		return &ReasoningResult{
 			Thought:     "用户输入了命令",
@@ -36,7 +40,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		}
 	}
 
-	toolInput, err := a.callLLMForTool()
+	toolInput, toolCallID, err := a.callLLMForTool()
 	if err != nil {
 		return &ReasoningResult{
 			Thought:     "LLM调用失败",
@@ -55,11 +59,12 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		}
 	}
 
-	if strings.Contains(toolInput, ":") {
+	if toolCallID != "" {
 		return &ReasoningResult{
 			Thought:     "调用工具: " + toolInput,
 			Action:      ActionExecuteTool,
 			ActionInput: toolInput,
+			ToolCallID:  toolCallID,
 			IsFinal:     false,
 		}
 	}
@@ -85,30 +90,42 @@ func (a ActionType) String() string {
 	}
 }
 
-func (a *Agent) callLLMForTool() (string, error) {
+func (a *Agent) callLLMForTool() (string, string, error) {
 	toolDefs := descriptorsToToolDefs(a.toolRegistry.Descriptors())
 
 	messages := a.ctxMgr.Build(true)
 
 	resp, err := a.llmClient.Chat(a.ctx, messages, toolDefs)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	toolCalls := llm.LastToolCalls(resp)
-	if len(toolCalls) == 0 {
-		if len(resp.Choices) > 0 {
-			return resp.Choices[0].Message.Content, nil
+	var textContent string
+	if len(resp.Choices) > 0 {
+		textContent = resp.Choices[0].Message.Content
+		if r := resp.Choices[0].Message.ReasoningContent; r != "" {
+			a.lastReasoningContent = r
 		}
-		return "", nil
+	}
+
+	var toolCalls []llm.ToolCall
+	if len(resp.Choices) > 0 {
+		toolCalls = resp.Choices[0].Message.ToolCalls
+	}
+	if len(toolCalls) == 0 {
+		if textContent != "" {
+			return textContent, "", nil
+		}
+		return "", "", nil
 	}
 
 	tc := toolCalls[0]
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		return "", fmt.Errorf("解析工具参数失败: %v", err)
+		return "", "", fmt.Errorf("解析工具参数失败: %v", err)
 	}
-	return tc.Function.Name + ":" + formatArgs(args), nil
+	a.ctxMgr.AddAssistantToolCall(textContent, a.lastReasoningContent, toolCalls[:1])
+	return tc.Function.Name + ":" + formatArgs(args), tc.ID, nil
 }
 
 func descriptorsToToolDefs(descs []tools.Descriptor) []llm.ToolDef {

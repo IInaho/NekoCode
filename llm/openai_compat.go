@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-type OpenAI struct {
+// OpenAICompatible handles any OpenAI-compatible API (OpenAI, GLM, DeepSeek, etc.).
+type OpenAICompatible struct {
 	APIKey      string
 	BaseURL     string
 	Model       string
@@ -18,8 +19,8 @@ type OpenAI struct {
 	temperature float64
 }
 
-func NewOpenAI(apiKey, baseURL, model string) *OpenAI {
-	return &OpenAI{
+func newOpenAICompat(apiKey, baseURL, model string) *OpenAICompatible {
+	return &OpenAICompatible{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
 		Model:       model,
@@ -28,15 +29,26 @@ func NewOpenAI(apiKey, baseURL, model string) *OpenAI {
 	}
 }
 
-func (o *OpenAI) SetAPIKey(apiKey string) { o.APIKey = apiKey }
-func (o *OpenAI) SetBaseURL(url string)   { o.BaseURL = url }
+func NewOpenAI(apiKey, baseURL, model string) *OpenAICompatible {
+	return newOpenAICompat(apiKey, baseURL, model)
+}
 
-func (o *OpenAI) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
+func NewGLM(apiKey, baseURL, model string) *OpenAICompatible {
+	if baseURL == "" {
+		baseURL = "https://open.bigmodel.cn/api/paas/v4"
+	}
+	return newOpenAICompat(apiKey, baseURL, model)
+}
+
+func (c *OpenAICompatible) SetAPIKey(apiKey string) { c.APIKey = apiKey }
+func (c *OpenAICompatible) SetBaseURL(url string)   { c.BaseURL = url }
+
+func (c *OpenAICompatible) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
 	body := map[string]interface{}{
-		"model":       o.Model,
+		"model":       c.Model,
 		"messages":    messages,
-		"max_tokens":  o.maxTokens,
-		"temperature": o.temperature,
+		"max_tokens":  c.maxTokens,
+		"temperature": c.temperature,
 		"stream":      false,
 	}
 	if len(tools) > 0 {
@@ -49,12 +61,12 @@ func (o *OpenAI) Chat(ctx context.Context, messages []Message, tools []ToolDef) 
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", o.APIKey))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
 
 	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
 	if err != nil {
@@ -77,12 +89,12 @@ func (o *OpenAI) Chat(ctx context.Context, messages []Message, tools []ToolDef) 
 	return &response, nil
 }
 
-func (o *OpenAI) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error) {
+func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error) {
 	body := map[string]interface{}{
-		"model":       o.Model,
+		"model":       c.Model,
 		"messages":    messages,
-		"max_tokens":  o.maxTokens,
-		"temperature": o.temperature,
+		"max_tokens":  c.maxTokens,
+		"temperature": c.temperature,
 		"stream":      true,
 	}
 	if len(tools) > 0 {
@@ -92,14 +104,14 @@ func (o *OpenAI) ChatStream(ctx context.Context, messages []Message, tools []Too
 
 	jsonBody, _ := json.Marshal(body)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		errChan := make(chan error, 1)
 		errChan <- err
 		return nil, errChan
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", o.APIKey))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
 
 	resp, err := (&http.Client{Timeout: 0}).Do(req)
 	if err != nil {
@@ -131,11 +143,15 @@ func (o *OpenAI) ChatStream(ctx context.Context, messages []Message, tools []Too
 				}
 				return
 			}
-			if chunk == nil {
+			if chunk == nil || len(chunk.Choices) == 0 {
 				continue
 			}
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				tokenChan <- StreamToken{Content: chunk.Choices[0].Delta.Content}
+			delta := chunk.Choices[0].Delta
+			if delta.Content != "" || delta.ReasoningContent != "" {
+				tokenChan <- StreamToken{
+					Content:          delta.Content,
+					ReasoningContent: delta.ReasoningContent,
+				}
 			}
 		}
 	}()

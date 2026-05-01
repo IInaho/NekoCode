@@ -48,7 +48,7 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 
 	idx := strings.Index(string(content), oldStr)
 	if idx == -1 {
-		return "", fmt.Errorf("未找到匹配的字符串。文件内容 (%s):\n%s", filepath.Base(path), withLineNumbers(string(content)))
+		return "", fmt.Errorf("未找到匹配的字符串。文件内容 (%s):\n%s\n提示：请用 filesystem read 重新读取文件，确认精确内容后再试。", filepath.Base(path), withLineNumbers(string(content)))
 	}
 
 	replaced := string(content)[:idx] + newStr + string(content)[idx+len(oldStr):]

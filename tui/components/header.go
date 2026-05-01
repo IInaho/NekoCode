@@ -31,10 +31,6 @@ func NewHeader(width int, provider, model, version string) *Header {
 }
 
 func (h *Header) SetWidth(width int) { h.Width = width }
-func (h *Header) SetInfo(provider, model string) {
-	h.Provider = provider
-	h.Model = model
-}
 func (h *Header) SetTokens(used, budget int) {
 	h.Tokens = used
 	h.TokenBudget = budget
@@ -45,7 +41,7 @@ func (h *Header) Height() int {
 }
 
 func (h *Header) View() string {
-	w := maxInt(20, h.Width)
+	w := max(20, h.Width)
 
 	catIcon := styles.CatBodyStyle.Render("(=") + styles.CatEyeStyle.Render("^.^") + styles.CatBodyStyle.Render("=)")
 	left := catIcon + " " + styles.PrimaryStyle.Bold(true).Render("PRIMUS") + " " + styles.SubtleStyle.Render("v"+h.Version)
@@ -70,7 +66,7 @@ func (h *Header) View() string {
 
 	content := left + dot + right
 	contentW := lipgloss.Width(content)
-	pad := maxInt(0, w-contentW)
+	pad := max(0, w-contentW)
 
 	line := strings.Repeat(styles.Horizontal, w)
 

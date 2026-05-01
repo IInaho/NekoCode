@@ -102,19 +102,30 @@ func renderSimpleMarkdown(content string, width int) string {
 		}
 
 		if inCodeBlock {
-			result = append(result, SubtleStyle.Render(Vertical+" "+line))
+			wrapped := hardWrapText(line, width)
+			renderWrappedLines(&result, wrapped, func(s string) string {
+				return SubtleStyle.Render(Vertical+" "+s)
+			})
 			continue
 		}
 
 		if diffSet[i] {
-			// Render diff lines with original content (before trimming).
 			switch line[0] {
 			case '+':
-				result = append(result, diffAddStyle.Render("+ "+strings.TrimPrefix(line, "+ ")))
+				wrapped := hardWrapText("+ "+strings.TrimPrefix(line, "+ "), width)
+				renderWrappedLines(&result, wrapped, func(s string) string {
+					return diffAddStyle.Render(s)
+				})
 			case '-':
-				result = append(result, diffDelStyle.Render("- "+strings.TrimPrefix(line, "- ")))
+				wrapped := hardWrapText("- "+strings.TrimPrefix(line, "- "), width)
+				renderWrappedLines(&result, wrapped, func(s string) string {
+					return diffDelStyle.Render(s)
+				})
 			case '@':
-				result = append(result, diffHdrStyle.Render(line))
+				wrapped := hardWrapText(line, width)
+				renderWrappedLines(&result, wrapped, func(s string) string {
+					return diffHdrStyle.Render(s)
+				})
 			}
 			continue
 		}
@@ -143,7 +154,7 @@ func renderSimpleMarkdown(content string, width int) string {
 		line = boldRegex.ReplaceAllString(line, PrimaryStyle.Render("$1"))
 		line = italicRegex.ReplaceAllString(line, MutedStyle.Render("$1"))
 
-		if runewidth.StringWidth(line) > width {
+		if lipgloss.Width(line) > width {
 			line = wrapText(line, width)
 		}
 
@@ -151,6 +162,32 @@ func renderSimpleMarkdown(content string, width int) string {
 	}
 
 	return strings.Join(result, "\n")
+}
+
+func hardWrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	var result []string
+	remaining := text
+	for runewidth.StringWidth(remaining) > width {
+		cut := runewidth.Truncate(remaining, width, "")
+		result = append(result, cut)
+		remaining = remaining[len(cut):]
+	}
+	if len(remaining) > 0 {
+		result = append(result, remaining)
+	}
+	if len(result) == 0 {
+		return text
+	}
+	return strings.Join(result, "\n")
+}
+
+func renderWrappedLines(result *[]string, text string, styleFn func(string) string) {
+	for _, l := range strings.Split(text, "\n") {
+		*result = append(*result, styleFn(l))
+	}
 }
 
 func wrapText(text string, width int) string {

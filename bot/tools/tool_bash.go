@@ -29,45 +29,41 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 	cmd, _ := args["command"].(string)
 	cmd = strings.TrimSpace(cmd)
 
-	forbidden := []string{
+	if matchAny(cmd, []string{
 		"sudo", "eval", "curl", "wget", "nc ", "ncat",
 		"telnet", "ssh ", "scp ", "nohup", "disown",
 		"> /dev/", "mkfs", "dd ", "chown", "chmod 777",
-	}
-	for _, p := range forbidden {
-		if strings.Contains(cmd, p) {
-			return LevelForbidden
-		}
-	}
-
-	if strings.Contains(cmd, "| bash") || strings.Contains(cmd, "| sh") ||
-		strings.Contains(cmd, "|bash") || strings.Contains(cmd, "|sh") {
+		"| bash", "| sh", "|bash", "|sh",
+	}) {
 		return LevelForbidden
 	}
 
-	destructive := []string{
+	if matchAny(cmd, []string{
 		"rm ", "rmdir", "chmod ", "chown ", "kill", "pkill",
 		"shutdown", "reboot", "mv ", "git push", "git reset --hard",
 		"docker rm", "docker rmi",
-	}
-	for _, p := range destructive {
-		if strings.HasPrefix(cmd, p) || strings.Contains(cmd, " "+p) {
-			return LevelDestructive
-		}
+	}) {
+		return LevelDestructive
 	}
 
-	writeOps := []string{
+	if matchAny(cmd, []string{
 		"mkdir", "touch ", "cp ", "mv ", "tar ", "zip ",
 		"gzip ", "git commit", "git add", "pip install", "npm install",
 		"go install", "cargo install", "make ", "docker build",
-	}
-	for _, p := range writeOps {
-		if strings.HasPrefix(cmd, p) || strings.Contains(cmd, " "+p) {
-			return LevelWrite
-		}
+	}) {
+		return LevelWrite
 	}
 
 	return LevelSafe
+}
+
+func matchAny(cmd string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.Contains(cmd, p) || strings.HasPrefix(cmd, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

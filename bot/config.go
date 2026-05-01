@@ -9,16 +9,18 @@ import (
 )
 
 type Config struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"api_key"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"base_url"`
+	Provider    string `json:"provider"`
+	APIKey      string `json:"api_key"`
+	Model       string `json:"model"`
+	BaseURL     string `json:"base_url"`
+	TokenBudget int    `json:"token_budget"`
 }
 
 var DefaultConfig = Config{
-	Provider: "openai",
-	Model:    "gpt-4",
-	BaseURL:  "https://api.openai.com/v1",
+	Provider:    "openai",
+	Model:       "gpt-4",
+	BaseURL:     "https://api.openai.com/v1",
+	TokenBudget: 64000,
 }
 
 func LoadConfig() (*Config, error) {

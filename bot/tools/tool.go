@@ -55,14 +55,6 @@ type Descriptor struct {
 	Parameters  []Parameter
 }
 
-func DescriptorOf(t Tool) Descriptor {
-	return Descriptor{
-		Name:        t.Name(),
-		Description: t.Description(),
-		Parameters:  t.Parameters(),
-	}
-}
-
 type Registry struct {
 	tools map[string]Tool
 	mu    sync.RWMutex
@@ -105,12 +97,14 @@ func (r *Registry) Descriptors() []Descriptor {
 	defer r.mu.RUnlock()
 	descs := make([]Descriptor, 0, len(r.tools))
 	for _, t := range r.tools {
-		descs = append(descs, DescriptorOf(t))
+		descs = append(descs, Descriptor{t.Name(), t.Description(), t.Parameters()})
 	}
 	return descs
 }
 
 // ParseCall parses a tool call string in the format "toolName:key1=val1,key2=val2".
+// Values containing commas or spaces may be double-quoted. Backslash escapes are
+// supported inside quoted values (\\ for backslash, \" for literal quote).
 func ParseCall(input string) (name string, args map[string]interface{}, err error) {
 	if input == "" {
 		return "", nil, fmt.Errorf("empty tool call")
@@ -129,12 +123,62 @@ func ParseCall(input string) (name string, args map[string]interface{}, err erro
 		return name, args, nil
 	}
 
-	for _, pair := range strings.Split(argsStr, ",") {
+	for _, pair := range SplitPairs(argsStr) {
 		kv := strings.SplitN(pair, "=", 2)
 		if len(kv) == 2 {
-			args[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+			args[strings.TrimSpace(kv[0])] = unquote(strings.TrimSpace(kv[1]))
 		}
 	}
 
 	return name, args, nil
+}
+
+// SplitPairs splits on commas that are not inside double-quoted segments.
+func SplitPairs(s string) []string {
+	var pairs []string
+	start := 0
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			inQuote = !inQuote
+		case '\\':
+			if inQuote && i+1 < len(s) {
+				i++ // skip escaped char
+			}
+		case ',':
+			if !inQuote {
+				pairs = append(pairs, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	pairs = append(pairs, s[start:])
+	return pairs
+}
+
+// unquote strips surrounding double-quotes and resolves backslash escapes.
+func unquote(s string) string {
+	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
+		return s
+	}
+	var b strings.Builder
+	inner := s[1 : len(s)-1]
+	for i := 0; i < len(inner); i++ {
+		if inner[i] == '\\' && i+1 < len(inner) {
+			b.WriteByte(inner[i+1])
+			i++
+		} else {
+			b.WriteByte(inner[i])
+		}
+	}
+	return b.String()
+}
+
+func RegisterDefaults(r *Registry) {
+	r.Register(&BashTool{})
+	r.Register(&FileSystemTool{})
+	r.Register(&GlobTool{})
+	r.Register(&EditTool{})
+	r.Register(&GrepTool{})
 }

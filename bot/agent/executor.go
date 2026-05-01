@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"primusbot/bot/tools"
+	"primusbot/bot/types"
 )
 
 type ActionResult struct {
@@ -78,7 +79,7 @@ func (a *Agent) executeTool(input string) *ActionResult {
 	}
 
 	if level >= tools.LevelWrite && a.confirmFn != nil {
-		if !a.confirmFn(ConfirmRequest{
+		if !a.confirmFn(types.ConfirmRequest{
 			ToolName: toolName,
 			Args:     args,
 			Level:    level,
@@ -93,8 +94,11 @@ func (a *Agent) executeTool(input string) *ActionResult {
 		}
 	}
 
-	output, err := tool.Execute(a.ctx, args)
-	if err != nil {
+	if a.phaseFn != nil {
+		a.phaseFn("Running " + toolName)
+		}
+		output, err := tool.Execute(a.ctx, args)
+		if err != nil {
 		return &ActionResult{
 			Thought:     "工具执行失败",
 			Action:      ActionExecuteTool,

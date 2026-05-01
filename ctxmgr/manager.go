@@ -21,7 +21,7 @@ type Manager struct {
 
 const (
 	defaultWindowSize  = 20
-	defaultTokenBudget = 8000
+	defaultTokenBudget = 64000
 )
 
 func New(systemPrompt string) *Manager {
@@ -37,10 +37,52 @@ func (m *Manager) SetSummarizer(fn Summarizer) {
 	m.summarizer = fn
 }
 
+func (m *Manager) SetTokenBudget(budget int) {
+	if budget > 0 {
+		m.tokenBudget = budget
+	}
+}
+
 func (m *Manager) Add(role, content string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages = append(m.messages, llm.Message{Role: role, Content: content})
+}
+
+func (m *Manager) AddAssistantResponse(content, reasoning string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, llm.Message{
+		Role:             "assistant",
+		Content:          content,
+		ReasoningContent: reasoning,
+	})
+}
+
+func (m *Manager) AddAssistantToolCall(content, reasoning string, toolCalls []llm.ToolCall) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, llm.Message{
+		Role:             "assistant",
+		Content:          content,
+		ReasoningContent: reasoning,
+		ToolCalls:        toolCalls,
+	})
+}
+
+func (m *Manager) AddToolResult(toolCallID, content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Guard against empty tool_call_id which some APIs require.
+	role := "tool"
+	if toolCallID == "" {
+		role = "user"
+	}
+	m.messages = append(m.messages, llm.Message{
+		Role:       role,
+		Content:    content,
+		ToolCallID: toolCallID,
+	})
 }
 
 func (m *Manager) Clear() {
@@ -138,15 +180,27 @@ func (m *Manager) Build(withTools bool) []llm.Message {
 	used := estimateTokens(out)
 	budget := m.tokenBudget - used - tokenOverhead(withTools)
 
-	// Drop oldest pairs until within budget (keep at least last 2)
+	// Drop oldest messages until within budget, preserving tool_calls/tool_result pairs.
 	for len(kept) > 2 {
 		if estimateTokens(kept) <= budget {
 			break
 		}
-		kept = kept[2:] // drop one user+assistant pair
+		drop := 2
+		for drop < len(kept) && kept[drop].Role == "tool" {
+			drop++
+		}
+		kept = kept[drop:]
 	}
 
-	out = append(out, kept...)
+	// Filter out malformed tool messages (missing tool_call_id).
+	filtered := make([]llm.Message, 0, len(kept))
+	for _, msg := range kept {
+		if msg.Role == "tool" && msg.ToolCallID == "" {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	out = append(out, filtered...)
 
 	if withTools {
 		out = append(out, llm.Message{

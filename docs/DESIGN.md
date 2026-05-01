@@ -68,7 +68,7 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 ### 聊天界面布局
 
 ```
-(=^.^=) PRIMUS v0.1.0 · 1.2k/8k · openai/gpt-4
+(=^.^=) PRIMUS v0.1.0 · 1.2k/64k · openai/gpt-4
 ──────────────────────────────────────────
 
 │ You
@@ -117,10 +117,10 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 
 ### 流式输出
 
-助手回复以打字机效果逐字出现：
-- spinner `◉` 在 Thinking 标识旁旋转
-- 文本逐步追加，消息区域自动跟随滚动
-- 完成后 spinner 消失，内容作为完整消息定格
+助手回复以结构化内容块实时展示：
+- spinner `◉` + 阶段状态（"Thinking (2.1s)" / "Running bash (3.5s)"）
+- 工具调用以独立卡片呈现，`◆` 暖金色图标，可折叠 `[+]`/`[-]`
+- 完成后卡片保留在消息中，`ctrl+e` 切换展开/折叠
 
 ### 输入交互
 
@@ -145,9 +145,11 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 
 | 工具 | 功能 | 安全等级 |
 |------|------|----------|
-| **bash** | 执行 Shell 命令 | 动态判断：只读命令自动放行，写命令需确认，危险命令需确认，禁止级直接拒绝 |
+| **bash** | 执行 Shell 命令 | 三级关键词匹配：safe/write/destructive/forbidden |
 | **filesystem** | 文件读写列表 | `read`/`list` 自动放行，`write` 需确认 |
 | **glob** | 文件模式匹配 | 始终自动放行 |
+| **grep** | ripgrep 内容搜索 | 始终自动放行 |
+| **edit** | 精确字符串替换 | 需确认，失败返回文件内容 |
 
 ### 危险命令分级
 
@@ -204,11 +206,11 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 | **LLM 网关** | `llm/` | 统一对接 OpenAI / Anthropic / GLM，原生 Function Calling，屏蔽 provider 差异 |
 | **工具系统** | `bot/tools/` | Tool 接口 + Registry + DangerLevel 四级安全分级 + ParseCall 调用协议 |
 | **上下文管理** | `ctxmgr/` | Hybrid Window + Summary：Build(withTools) 统一入口，自动摘要，token 截断 |
-| **确认机制** | `bot/agent/confirm.go` | ConfirmRequest channel 通信，TUI 渲染确认栏，enter/esc 应答 |
+| **确认机制** | `bot/types/types.go` | ConfirmRequest channel 通信，TUI 渲染确认栏，enter/esc 应答 |
 | **Bot 组装** | `bot/bot.go` | 依赖注入：ctxmgr + agent + tools + llm + command，SummarizeIfNeeded 触发 |
 | **命令系统** | `bot/command.go` | `/` 前缀解析，handler 注册模式，CommandCallbacks 依赖注入 |
 | **配置管理** | `bot/config.go` | `~/.primusbot/config.json` 加载 |
-| **TUI 界面** | `tui/` | Bubble Tea v2 单包架构，Model/Update/View/Commands 共享状态；components 子包渲染消息气泡、输入框、启动页；styles 子包管理色彩和 Markdown |
+| **TUI 界面** | `tui/` | Bubble Tea v2，通过 `BotInterface` 接口与 bot 解耦；components 子包渲染消息/输入/启动页；styles 子包管理色彩和 Markdown |
 
 ## 非交互模式
 

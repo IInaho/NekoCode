@@ -1,9 +1,8 @@
-// Update 消息循环：处理 WindowSize、SpinnerTick、doneMsg、confirmMsg、KeyPress。
-// 确认键分流、历史翻阅、命令提示选择、消息发送均在此路由。
 package tui
 
 import (
 	"fmt"
+	"time"
 
 	"primusbot/tui/components"
 	"primusbot/tui/styles"
@@ -13,11 +12,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+const contentMarginV = 2
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer func() {
 		if r := recover(); r != nil {
 			logPanic(r)
-			panic(r) // re-panic so Bubble Tea can clean up the terminal
 		}
 	}()
 
@@ -31,8 +31,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Input.SetWidth(msg.Width)
 		m.Splash.SetSize(msg.Width, msg.Height)
 
-		contentHeight := msg.Height - m.Header.Height() - m.Input.Height() - 2
-		m.Messages.SetSize(msg.Width, contentHeight)
+		m.resizeMessages()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -42,11 +41,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleDone(msg)
 
 	case confirmMsg:
-		m.PendingConfirm = &msg.req
+		m.ConfirmBar.SetRequest(&msg.req)
+		m.state = StateConfirming
+		m.resizeMessages()
 		return m, nil
 
 	case tea.KeyPressMsg:
-		if m.PendingConfirm != nil {
+		if m.state == StateConfirming {
 			return m.handleConfirmKey(msg)
 		}
 		return m, m.handleKeyPress(msg)
@@ -74,54 +75,47 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
 	var cmd tea.Cmd
 	m.Spinner, cmd = m.Spinner.Update(msg)
-	if m.PendingConfirm != nil {
+
+	if m.state == StateConfirming {
 		m.Messages.SetSpinnerView("")
 		return nil
 	}
+
 	m.Messages.SetSpinnerView(m.Spinner.View())
 
-	if m.Stream.Active() {
-		text, reasoning := m.Stream.Snapshot()
+	if m.state == StateProcessing {
+		elapsed := time.Since(m.processingStart)
+		m.Messages.SetProcessingStatus(fmt.Sprintf("%s (%.1fs)", m.processingPhase, elapsed.Seconds()))
+
 		if m.Stream.HasNew() {
-			cw := components.CappedWidth(m.Messages.Width())
-			m.Messages.SetStreamContentWidth(cw)
-			m.Messages.SetStreamText(styles.RenderMarkdownWithWidth(text, cw))
-			m.Messages.SetReasoningText(reasoning)
+			blocks := m.Stream.Snapshot()
+			m.Messages.SetBlocks(blocks)
 			m.Stream.MarkSeen()
 			if m.Messages.Follow {
 				m.Messages.GotoBottom()
 			}
 		}
-	}
-
-	if m.PendingConfirm != nil {
-		return nil
-	}
-	if m.Stream.Active() || m.Messages.Processing {
 		return tea.Batch(cmd, m.Spinner.Tick)
 	}
+
 	return nil
 }
 
 func (m *Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter", "y", "Y":
-		m.PendingConfirm.Response <- true
+		m.ConfirmBar.Respond(true)
 	case "esc", "n", "N", "ctrl+c":
-		m.PendingConfirm.Response <- false
+		m.ConfirmBar.Respond(false)
 	default:
 		return m, nil
 	}
-	m.PendingConfirm = nil
-	return m, listenConfirm(m.confirmCh)
+	m.state = StateProcessing
+	return m, tea.Batch(listenConfirm(m.confirmCh), m.Spinner.Tick)
 }
 
 func (m *Model) handleDone(msg doneMsg) tea.Cmd {
-	m.Stream.Stop()
-	m.Messages.SetProcessing(false)
-	m.Messages.SetStreamText("")
-	m.Messages.SetReasoningText("")
-	m.Input.SetSending(false)
+	m.transitionTo(StateReady)
 
 	if msg.err != nil {
 		m.Messages.AddMessage(components.ChatMessage{
@@ -129,7 +123,6 @@ func (m *Model) handleDone(msg doneMsg) tea.Cmd {
 			Content: fmt.Sprintf("Error: %v", msg.err),
 		})
 	} else {
-		// Prepend diffs to final content so they render with colors.
 		content := msg.content
 		if msg.diffBlocks != "" {
 			content = msg.diffBlocks + "\n" + content
@@ -137,14 +130,15 @@ func (m *Model) handleDone(msg doneMsg) tea.Cmd {
 
 		cw := components.CappedWidth(m.Messages.Width())
 		renderedContent := styles.RenderMarkdownWithWidth(content, cw)
+		blocks := m.Stream.Snapshot()
 		m.Messages.AddMessage(components.ChatMessage{
-			Role:             "assistant",
-			Content:          content,
-			ReasoningContent: msg.reasoningContent,
-			RenderedContent:  renderedContent,
+			Role:            "assistant",
+			Content:         content,
+			RenderedContent: renderedContent,
+			Blocks:          blocks,
 		})
 	}
-	m.PendingConfirm = nil
+
 	m.updateTokens()
 	m.Messages.GotoBottom()
 	return nil
@@ -160,7 +154,12 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+c":
 		return tea.Quit
 
-	// up/down always navigate input history; scroll wheel handles messages
+	case "ctrl+e":
+		if m.state != StateProcessing {
+			m.Messages.ToggleLastAssistant()
+		}
+		return nil
+
 	case "up":
 		m.Input.HistoryUp()
 		return nil
@@ -174,7 +173,7 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	if m.Stream.Active() {
+	if m.state == StateProcessing {
 		return nil
 	}
 
@@ -190,7 +189,7 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "esc":
 	case "enter":
-		if m.suggestionsVisible {
+		if m.Suggestions.Visible() {
 			m.acceptSuggestion()
 			return nil
 		}
@@ -198,7 +197,7 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		if value == "" {
 			return nil
 		}
-		m.suggestionsVisible = false
+		m.Suggestions.Hide()
 		m.Input.AddHistory(value)
 		m.Input.Reset()
 		return m.startChat(value)

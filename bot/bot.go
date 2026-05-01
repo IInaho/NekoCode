@@ -1,6 +1,3 @@
-// Package bot 是应用的核心组装层。Bot 结构体聚合所有依赖
-//（ctxmgr、agent、tools、llm、command、config），提供统一的公开 API。
-// New() 完成依赖注入和生命周期管理。
 package bot
 
 import (
@@ -10,15 +7,16 @@ import (
 	_ "embed"
 	"primusbot/bot/agent"
 	"primusbot/bot/tools"
+	"primusbot/bot/types"
 	"primusbot/ctxmgr"
 	"primusbot/llm"
 )
 
 type Bot struct {
-	Cfg       *Config
-	CtxMgr    *ctxmgr.Manager
-	CmdParser *Parser
-	Agent     *agent.Agent
+	cfg       *Config
+	ctxMgr    *ctxmgr.Manager
+	cmdParser *Parser
+	ag        *agent.Agent
 }
 
 //go:embed prompt/system.md
@@ -29,6 +27,7 @@ func New() *Bot {
 
 	cfg, _ := LoadConfig()
 	ctxMgr := ctxmgr.New(SystemPrompt)
+	ctxMgr.SetTokenBudget(cfg.TokenBudget)
 
 	var llmClient llm.LLM
 	switch cfg.Provider {
@@ -56,10 +55,10 @@ func New() *Bot {
 	tools.RegisterDefaults(toolRegistry)
 
 	b := &Bot{
-		Cfg:       cfg,
-		CtxMgr:    ctxMgr,
-		CmdParser: NewParser(),
-		Agent:     agent.New(ctx, ctxMgr, llmClient, toolRegistry),
+		cfg:       cfg,
+		ctxMgr:    ctxMgr,
+		cmdParser: NewParser(),
+		ag:        agent.New(ctx, ctxMgr, llmClient, toolRegistry),
 	}
 
 	callbacks := &CommandCallbacks{
@@ -68,44 +67,53 @@ func New() *Bot {
 		ForceSummarize: func() (string, error) { return b.ForceSummarize() },
 		ContextStats:   func() string { return b.ContextStats() },
 	}
-	RegisterDefaultCommands(b.CmdParser, callbacks)
+	RegisterDefaultCommands(b.cmdParser, callbacks)
 
 	return b
 }
 
+// Public API
+
+func (b *Bot) Provider() string { return b.cfg.Provider }
+func (b *Bot) Model() string    { return b.cfg.Model }
+
 func (b *Bot) ExecuteCommand(input string) (string, bool) {
-	cmd := b.CmdParser.Parse(input)
+	cmd := b.cmdParser.Parse(input)
 	if cmd.Name == "" {
 		return "", false
 	}
-	return b.CmdParser.Execute(cmd)
+	return b.cmdParser.Execute(cmd)
 }
 
 func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string)) (string, error) {
-	result := b.Agent.Run(input, onStep)
+	result := b.ag.Run(input, onStep)
 	b.SummarizeIfNeeded()
 	return result.FinalOutput, result.Error
 }
 
-func (b *Bot) SetConfirmFn(fn agent.ConfirmFunc) {
-	b.Agent.SetConfirmFn(fn)
+func (b *Bot) SetConfirmFn(fn types.ConfirmFunc) {
+	b.ag.SetConfirmFn(fn)
+}
+
+func (b *Bot) SetPhaseFn(fn types.PhaseFunc) {
+	b.ag.SetPhaseFn(fn)
 }
 
 func (b *Bot) SummarizeIfNeeded() {
-	if b.CtxMgr.NeedsSummarization() {
-		_ = b.CtxMgr.Summarize()
+	if b.ctxMgr.NeedsSummarization() {
+		_ = b.ctxMgr.Summarize()
 	}
 }
 
 func (b *Bot) ForceSummarize() (string, error) {
-	count, tokens, hadSummary := b.CtxMgr.Stats()
+	count, tokens, hadSummary := b.ctxMgr.Stats()
 	if count <= 2 {
 		return "对话太短，无需压缩", nil
 	}
-	if err := b.CtxMgr.Summarize(); err != nil {
+	if err := b.ctxMgr.Summarize(); err != nil {
 		return "", err
 	}
-	_, newTokens, _ := b.CtxMgr.Stats()
+	_, newTokens, _ := b.ctxMgr.Stats()
 	prev := "已压缩"
 	if hadSummary {
 		prev = "已更新摘要"
@@ -114,7 +122,7 @@ func (b *Bot) ForceSummarize() (string, error) {
 }
 
 func (b *Bot) ContextStats() string {
-	count, tokens, hasSummary := b.CtxMgr.Stats()
+	count, tokens, hasSummary := b.ctxMgr.Stats()
 	summary := "无"
 	if hasSummary {
 		summary = "有"
@@ -123,9 +131,9 @@ func (b *Bot) ContextStats() string {
 }
 
 func (b *Bot) TokenUsage() (int, int) {
-	return b.CtxMgr.TokenUsage()
+	return b.ctxMgr.TokenUsage()
 }
 
 func (b *Bot) CommandNames() []string {
-	return b.CmdParser.Commands()
+	return b.cmdParser.Commands()
 }
