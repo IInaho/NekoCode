@@ -73,14 +73,17 @@
 ### 15. MCP 协议支持
 - MCP client，连接外部 tool server
 
-### 16. Web Search / Fetch
-- 搜索最新文档，读取 URL 内容
+### 16. Web Search / Fetch ✅
+- `web_search`：Bing HTML 抓取，零配置零 API key，国内可用
+- `web_fetch`：HTTP GET + HTML→Markdown 转换，支持 prompt 指导提取
+- [技术方案](./design/web-search.md)
 
 ### 17. Session 管理
 - 对话存档/恢复，支持分支对话
 
 ### 18. Plan 模式
 - 复杂改动先出方案文本，用户审批后执行
+- [技术方案](./design/plan-mode.md)
 
 ### 19. 凭证管理
 - API key 安全存储，多 profile 切换

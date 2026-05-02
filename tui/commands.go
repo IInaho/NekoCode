@@ -113,7 +113,7 @@ func formatBriefArgs(toolName, toolArgs string) string {
 	case "bash":
 		cmd := args["command"]
 		if len(cmd) > 50 {
-			cmd = cmd[:47] + "..."
+			cmd = truncate(cmd, 47)
 		}
 		return cmd
 	case "glob":
@@ -128,9 +128,7 @@ func formatBriefArgs(toolName, toolArgs string) string {
 	default:
 		// Show first non-empty value.
 		for _, v := range args {
-			if len(v) > 30 {
-				v = v[:27] + "..."
-			}
+			v = truncate(v, 27)
 			return v
 		}
 		return ""
@@ -156,10 +154,11 @@ func (m *Model) cycleSuggestion(delta int) {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
 func splitArgPairs(s string) []string {

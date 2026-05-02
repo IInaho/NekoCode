@@ -181,4 +181,14 @@ func RegisterDefaults(r *Registry) {
 	r.Register(&GlobTool{})
 	r.Register(&EditTool{})
 	r.Register(&GrepTool{})
+	r.Register(NewWebSearchTool())
+	r.Register(NewWebFetchTool())
+}
+
+func truncateByRune(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
 }
