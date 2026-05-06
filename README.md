@@ -25,6 +25,13 @@
 
 <br>
 
+<table>
+<tr>
+<td width="50%"><img src="docs/images/splash.png" width="100%" alt="启动页"></td>
+<td width="50%"><img src="docs/images/chat.png" width="100%" alt="聊天界面"></td>
+</tr>
+</table>
+
 ---
 
 ### 亮点
