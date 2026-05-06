@@ -1,18 +1,11 @@
 package components
 
 import (
-	"strings"
 	"sync"
 
 	"primusbot/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
-)
-
-var (
-	scrollbarThumb = styles.HeavyVert
-	scrollbarTrack = styles.Vertical
 )
 
 type Messages struct {
@@ -73,6 +66,14 @@ func (m *Messages) SetProcessingStatus(text string) {
 	if m.processingItem != nil {
 		m.processingItem.SetStatusText(text)
 		m.Invalidate()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) SetProcessingTokens(prompt, completion int) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.SetTokens(prompt, completion)
 	}
 	m.mu.Unlock()
 }
@@ -162,45 +163,5 @@ func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 }
 
 func (m *Messages) View() string {
-	content := m.Render()
-	scrollbar := m.renderScrollbar()
-
-	if scrollbar == "" {
-		return content
-	}
-
-	filled := lipgloss.NewStyle().Width(m.Width()).Render(content)
-	return lipgloss.JoinHorizontal(lipgloss.Top, filled, scrollbar)
-}
-
-func (m *Messages) renderScrollbar() string {
-	totalHeight := m.TotalContentHeight()
-	viewportHeight := m.Height()
-
-	if totalHeight <= viewportHeight {
-		return ""
-	}
-
-	scrollPercent := m.ScrollPercent()
-	thumbSize := max(1, viewportHeight*viewportHeight/totalHeight)
-
-	thumbPos := 0
-	trackSpace := viewportHeight - thumbSize
-	if trackSpace > 0 {
-		thumbPos = min(trackSpace, int(float64(trackSpace)*scrollPercent))
-	}
-
-	var sb strings.Builder
-	for i := 0; i < viewportHeight; i++ {
-		if i > 0 {
-			sb.WriteString("\n")
-		}
-		if i >= thumbPos && i < thumbPos+thumbSize {
-			sb.WriteString(m.sty.Scrollbar.Thumb.Render(scrollbarThumb))
-		} else {
-			sb.WriteString(m.sty.Scrollbar.Track.Render(scrollbarTrack))
-		}
-	}
-
-	return sb.String()
+	return m.Render()
 }

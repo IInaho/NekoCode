@@ -30,11 +30,13 @@ func NewInput(width int) *Input {
 	ta.SetVirtualCursor(false)
 	ta.Focus()
 	ta.Prompt = styles.CatEyeStyle.Bold(true).Render(styles.HeavyVert + " ")
-	ta.CharLimit = 4096
+	ta.CharLimit = 32768
 	ta.SetWidth(width)
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
-	ta.KeyMap.InsertNewline.SetEnabled(false)
+	// InsertNewline enabled so pasted multi-line text is preserved.
+	// Enter key is intercepted in Update() to trigger submit instead of newline.
+	ta.KeyMap.InsertNewline.SetEnabled(true)
 
 	s := ta.Styles()
 	s.Focused.CursorLine = lipgloss.NewStyle()
@@ -59,7 +61,7 @@ func (i *Input) Width() int {
 }
 
 func (i *Input) Value() string {
-	return strings.TrimSpace(i.textarea.Value())
+	return strings.TrimRight(i.textarea.Value(), "\n\t\r ")
 }
 
 func (i *Input) SetValue(value string) {
@@ -138,6 +140,11 @@ func (i *Input) Cursor() *tea.Cursor {
 }
 
 func (i *Input) Update(msg tea.Msg) (*Input, tea.Cmd) {
+	// Intercept Enter: don't insert newline (app handles submission).
+	// Other keys (including paste events with multi-line content) pass through.
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "enter" {
+		return i, nil
+	}
 	var cmd tea.Cmd
 	i.textarea, cmd = i.textarea.Update(msg)
 	return i, cmd

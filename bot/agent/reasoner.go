@@ -1,5 +1,3 @@
-// 决策模块：每轮通过 callLLMForTool 调用 LLM（Native Function Calling），
-// 上下文包含用户输入 + 历史工具调用/结果，LLM 自主决定继续调用工具或回复文本。
 package agent
 
 import (
@@ -19,11 +17,18 @@ const (
 	ActionFinish
 )
 
+type ToolCallItem struct {
+	ID   string
+	Name string
+	Args map[string]interface{}
+}
+
 type ReasoningResult struct {
 	Thought     string
 	Action      ActionType
 	ActionInput string
 	ToolCallID  string
+	ToolCalls   []ToolCallItem
 	IsFinal     bool
 }
 
@@ -31,49 +36,46 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 	if a.phaseFn != nil {
 		a.phaseFn("Thinking")
 	}
-	if strings.HasPrefix(state.input, "/") {
+	if strings.HasPrefix(state.Input, "/") {
 		return &ReasoningResult{
-			Thought:     "用户输入了命令",
-			Action:      ActionFinish,
-			ActionInput: "",
-			IsFinal:     true,
+			Thought: "用户输入了命令", Action: ActionFinish, IsFinal: true,
 		}
 	}
 
-	toolInput, toolCallID, err := a.callLLMForTool()
+	toolCalls, textContent, err := a.callLLMForTool()
 	if err != nil {
 		return &ReasoningResult{
-			Thought:     "LLM调用失败",
-			Action:      ActionChat,
-			ActionInput: fmt.Sprintf("抱歉，调用失败: %v", err),
-			IsFinal:     true,
+			Thought: "LLM调用失败", Action: ActionChat,
+			ActionInput: fmt.Sprintf("抱歉，调用失败: %v", err), IsFinal: true,
 		}
 	}
 
-	if toolInput == "" {
+	if len(toolCalls) == 0 {
+		if textContent == "" {
+			textContent = "抱歉，我无法确定要做什么"
+		}
 		return &ReasoningResult{
-			Thought:     "无法确定要使用的工具",
-			Action:      ActionChat,
-			ActionInput: "抱歉，我无法确定要做什么",
-			IsFinal:     true,
+			Thought: "直接回复", Action: ActionChat,
+			ActionInput: textContent, IsFinal: true,
 		}
 	}
 
-	if toolCallID != "" {
+	if len(toolCalls) == 1 {
+		tc := toolCalls[0]
 		return &ReasoningResult{
-			Thought:     "调用工具: " + toolInput,
-			Action:      ActionExecuteTool,
-			ActionInput: toolInput,
-			ToolCallID:  toolCallID,
-			IsFinal:     false,
+			Thought: "调用工具: " + tc.Name, Action: ActionExecuteTool,
+			ActionInput: tc.Name + ":" + formatArgs(tc.Args),
+			ToolCallID:  tc.ID, ToolCalls: toolCalls, IsFinal: false,
 		}
 	}
 
+	var names []string
+	for _, tc := range toolCalls {
+		names = append(names, tc.Name)
+	}
 	return &ReasoningResult{
-		Thought:     "直接回复",
-		Action:      ActionChat,
-		ActionInput: toolInput,
-		IsFinal:     true,
+		Thought: "并行调用工具: " + strings.Join(names, ", "),
+		Action:  ActionExecuteTool, ToolCalls: toolCalls, IsFinal: false,
 	}
 }
 
@@ -90,42 +92,150 @@ func (a ActionType) String() string {
 	}
 }
 
-func (a *Agent) callLLMForTool() (string, string, error) {
+func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 	toolDefs := descriptorsToToolDefs(a.toolRegistry.Descriptors())
-
 	messages := a.ctxMgr.Build(true)
-
-	resp, err := a.llmClient.Chat(a.ctx, messages, toolDefs)
-	if err != nil {
-		return "", "", err
+	if a.transformContext != nil {
+		messages = a.transformContext(messages)
 	}
 
-	var textContent string
-	if len(resp.Choices) > 0 {
-		textContent = resp.Choices[0].Message.Content
-		if r := resp.Choices[0].Message.ReasoningContent; r != "" {
-			a.lastReasoningContent = r
+	tokenCh, errCh := a.llmClient.ChatStream(a.ctx, messages, toolDefs)
+
+	var textBuf strings.Builder
+	var reasoningBuf strings.Builder
+	tcAccum := make(map[int]*toolAccum)
+
+	ctxChars := 0
+	for _, m := range messages {
+		ctxChars += len(m.Content) + len(m.Role)
+	}
+	a.AddTokens(ctxChars/4, 0)
+
+	for token := range tokenCh {
+		if token.Content != "" {
+			textBuf.WriteString(token.Content)
+			if a.streamFn != nil {
+				a.streamFn(token.Content, false)
+			}
+			a.AddTokens(0, 1)
 		}
+		if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
+			a.ResetTokens()
+			a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+		}
+		if token.ReasoningContent != "" {
+			reasoningBuf.WriteString(token.ReasoningContent)
+			writeAgentLog("ReasoningContent[%d]: %q", len(token.ReasoningContent), token.ReasoningContent)
+		}
+		if token.ToolCallDelta != nil {
+			idx := token.ToolCallDelta.Index
+			acc := tcAccum[idx]
+			if acc == nil {
+				acc = &toolAccum{}
+				tcAccum[idx] = acc
+			}
+			if token.ToolCallDelta.ID != "" {
+				acc.id = token.ToolCallDelta.ID
+			}
+			if token.ToolCallDelta.Name != "" {
+				acc.name = token.ToolCallDelta.Name
+			}
+			acc.args.WriteString(token.ToolCallDelta.Arguments)
+		}
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return nil, "", err
+		}
+	default:
+	}
+
+	textContent := tools.StripAnsi(textBuf.String())
+	if reasoningBuf.Len() > 0 {
+		a.lastReasoningContent = reasoningBuf.String()
+	}
+
+	if len(tcAccum) == 0 {
+		return nil, textContent, nil
 	}
 
 	var toolCalls []llm.ToolCall
-	if len(resp.Choices) > 0 {
-		toolCalls = resp.Choices[0].Message.ToolCalls
-	}
-	if len(toolCalls) == 0 {
-		if textContent != "" {
-			return textContent, "", nil
+	for i := 0; i < len(tcAccum); i++ {
+		acc := tcAccum[i]
+		if acc == nil {
+			continue
 		}
-		return "", "", nil
+		toolCalls = append(toolCalls, llm.ToolCall{
+			ID:   acc.id,
+			Type: "function",
+			Function: llm.FunctionCall{
+				Name:      acc.name,
+				Arguments: acc.args.String(),
+			},
+		})
 	}
 
-	tc := toolCalls[0]
-	var args map[string]interface{}
-	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		return "", "", fmt.Errorf("解析工具参数失败: %v", err)
+	items := make([]ToolCallItem, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			return nil, "", fmt.Errorf("解析工具参数失败: %v", err)
+		}
+		items = append(items, ToolCallItem{
+			ID: tc.ID, Name: tc.Function.Name, Args: args,
+		})
 	}
-	a.ctxMgr.AddAssistantToolCall(textContent, a.lastReasoningContent, toolCalls[:1])
-	return tc.Function.Name + ":" + formatArgs(args), tc.ID, nil
+
+	a.ctxMgr.AddAssistantToolCall(textContent, a.lastReasoningContent, toolCalls)
+	return items, textContent, nil
+}
+
+type toolAccum struct {
+	id   string
+	name string
+	args strings.Builder
+}
+
+func (a *Agent) forceSynthesize() string {
+	messages := a.ctxMgr.Build(false)
+	messages = append(messages, llm.Message{
+		Role: "user", Content: a.synthesizePrompt,
+	})
+	tokenCh, errCh := a.llmClient.ChatStream(a.ctx, messages, nil)
+
+	var textBuf strings.Builder
+	ctxChars := 0
+	for _, m := range messages {
+		ctxChars += len(m.Content) + len(m.Role)
+	}
+	a.AddTokens(ctxChars/4, 0)
+
+	for token := range tokenCh {
+		if token.Content != "" {
+			textBuf.WriteString(token.Content)
+			if a.streamFn != nil {
+				a.streamFn(token.Content, false)
+			}
+			a.AddTokens(0, 1)
+		}
+		if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
+			a.ResetTokens()
+			a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+		}
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return "抱歉，信息收集完成但总结失败"
+		}
+	default:
+	}
+	if textBuf.Len() > 0 {
+		return tools.StripAnsi(textBuf.String())
+	}
+	return "抱歉，无法生成总结"
 }
 
 func descriptorsToToolDefs(descs []tools.Descriptor) []llm.ToolDef {
@@ -134,10 +244,7 @@ func descriptorsToToolDefs(descs []tools.Descriptor) []llm.ToolDef {
 		props := make(map[string]llm.Property)
 		var required []string
 		for _, p := range d.Parameters {
-			props[p.Name] = llm.Property{
-				Type:        p.Type,
-				Description: p.Description,
-			}
+			props[p.Name] = llm.Property{Type: p.Type, Description: p.Description}
 			if p.Required {
 				required = append(required, p.Name)
 			}
@@ -148,9 +255,7 @@ func descriptorsToToolDefs(descs []tools.Descriptor) []llm.ToolDef {
 				Name:        d.Name,
 				Description: d.Description,
 				Parameters: llm.Parameters{
-					Type:       "object",
-					Properties: props,
-					Required:   required,
+					Type: "object", Properties: props, Required: required,
 				},
 			},
 		}

@@ -6,8 +6,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 type DangerLevel int
@@ -34,10 +37,18 @@ func (d DangerLevel) String() string {
 	}
 }
 
+type ExecutionMode int
+
+const (
+	ModeParallel   ExecutionMode = iota // can run concurrently with other tools
+	ModeSequential                      // must run alone, blocks other tools
+)
+
 type Tool interface {
 	Name() string
 	Description() string
 	Parameters() []Parameter
+	ExecutionMode(args map[string]interface{}) ExecutionMode
 	DangerLevel(args map[string]interface{}) DangerLevel
 	Execute(ctx context.Context, args map[string]interface{}) (string, error)
 }
@@ -185,7 +196,26 @@ func RegisterDefaults(r *Registry) {
 	r.Register(NewWebFetchTool())
 }
 
-func truncateByRune(s string, max int) string {
+var ansiRegex = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// StripAnsi removes ANSI escape sequences from a string.
+func StripAnsi(s string) string {
+	return ansiRegex.ReplaceAllString(s, "")
+}
+
+var toolTransport = &http.Transport{
+	MaxIdleConns:    10,
+	IdleConnTimeout: 60 * time.Second,
+}
+
+func NewToolHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: toolTransport,
+		Timeout:   timeout,
+	}
+}
+
+func TruncateByRune(s string, max int) string {
 	runes := []rune(s)
 	if len(runes) <= max {
 		return s

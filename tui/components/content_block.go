@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"primusbot/bot/tools"
 	"primusbot/tui/styles"
 
 	"charm.land/lipgloss/v2"
@@ -18,35 +19,46 @@ const (
 )
 
 type ContentBlock struct {
-	Type      BlockType
-	Content   string
-	ToolName  string
-	ToolArgs  string
-	Collapsed bool
+	Type       BlockType
+	Content    string
+	ToolName   string
+	ToolArgs   string
+	Collapsed  bool
+	BatchIdx   int
+	BatchTotal int
 }
 
 var toolAccent = lipgloss.NewStyle().Foreground(lipgloss.Color("#c9a96e"))
 
-func renderBlockToolCall(b ContentBlock, width int, sty *styles.Styles) string {
+func renderToolLine(b ContentBlock, width int, sty *styles.Styles) string {
 	arrow := "[+]"
 	if !b.Collapsed {
 		arrow = "[-]"
 	}
-
-	icon := toolAccent.Render("◆")
-	header := fmt.Sprintf("%s %s %s  %s", icon, b.ToolName, b.ToolArgs, sty.Subtle.Render(arrow))
-	sep := toolAccent.Render(strings.Repeat(styles.Horizontal, min(width-4, 40)))
-
-	var sb strings.Builder
-	sb.WriteString(header)
-	if !b.Collapsed && b.Content != "" {
-		sb.WriteString("\n" + sep + "\n")
-		for _, line := range strings.Split(b.Content, "\n") {
-			sb.WriteString(sty.Muted.Render("  "+line) + "\n")
-		}
-		sb.WriteString(sep)
+	icon := "◆"
+	if b.BatchTotal > 1 {
+		icon = "⚡"
 	}
-	return strings.TrimRight(sb.String(), "\n")
+	args := b.ToolArgs
+	if b.BatchTotal > 1 {
+		args = fmt.Sprintf("(%d/%d) %s", b.BatchIdx, b.BatchTotal, b.ToolArgs)
+	}
+	header := fmt.Sprintf("%s %s %s  %s", icon, b.ToolName, args, sty.Subtle.Render(arrow))
+	accentLine := toolAccent.Render(header)
+
+	if b.Collapsed || b.Content == "" {
+		return accentLine
+	}
+
+	contentW := width - 6
+	if contentW < 10 {
+		contentW = 10
+	}
+	text := tools.TruncateByRune(strings.TrimSpace(b.Content), 1200)
+	rendered := styles.RenderMarkdownWithWidth(text, contentW)
+	indented := lipgloss.NewStyle().PaddingLeft(2).Render(rendered)
+
+	return lipgloss.JoinVertical(lipgloss.Left, accentLine, indented)
 }
 
 func renderBlockThinking(b ContentBlock, sty *styles.Styles) string {
@@ -63,7 +75,7 @@ func renderBlockText(b ContentBlock, _ *styles.Styles) string {
 func RenderBlock(b ContentBlock, width int, sty *styles.Styles) string {
 	switch b.Type {
 	case BlockToolCall:
-		return renderBlockToolCall(b, width, sty)
+		return renderToolLine(b, width, sty)
 	case BlockThinking:
 		return renderBlockThinking(b, sty)
 	default:
@@ -75,12 +87,30 @@ func RenderBlocks(blocks []ContentBlock, width int, sty *styles.Styles) string {
 	if len(blocks) == 0 {
 		return ""
 	}
+
+	cardW := width
+	if cardW < 20 {
+		cardW = 20
+	}
+
 	var lines []string
-	for _, b := range blocks {
-		rendered := RenderBlock(b, width, sty)
-		if rendered != "" {
-			lines = append(lines, rendered)
+	for i, b := range blocks {
+		if b.BatchTotal > 1 && b.BatchIdx == 1 {
+			lines = append(lines, toolAccent.Render(fmt.Sprintf("⚡ %d tools in parallel", b.BatchTotal)))
+		}
+		lines = append(lines, RenderBlock(b, cardW, sty))
+		if b.BatchTotal > 1 && b.BatchIdx == b.BatchTotal && i < len(blocks)-1 {
+			lines = append(lines, "")
 		}
 	}
-	return strings.Join(lines, "\n")
+
+	body := strings.Join(lines, "\n")
+	card := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("#c9a96e")).
+		PaddingLeft(1).PaddingRight(1).
+		Width(cardW).MaxWidth(cardW).
+		Render(body)
+
+	return card
 }

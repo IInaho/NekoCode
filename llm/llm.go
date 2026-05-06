@@ -1,6 +1,23 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"net/http"
+	"time"
+)
+
+var sharedTransport = &http.Transport{
+	MaxIdleConns:        20,
+	IdleConnTimeout:     90 * time.Second,
+	DisableCompression:  false,
+}
+
+var SharedHTTPClient = &http.Client{Transport: sharedTransport}
+
+var SharedHTTPClientTimeout = &http.Client{
+	Transport: sharedTransport,
+	Timeout:   120 * time.Second,
+}
 
 type Message struct {
 	Role             string     `json:"role"`
@@ -12,6 +29,7 @@ type Message struct {
 }
 
 type ToolCall struct {
+	Index    int          `json:"index"`
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
@@ -51,11 +69,26 @@ type StreamChunk struct {
 		Delta        Delta  `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *StreamUsage `json:"usage"`
 }
 
 type StreamToken struct {
 	Content          string
 	ReasoningContent string
+	ToolCallDelta    *ToolCallDelta // non-nil when streaming a tool call fragment
+	Usage            *StreamUsage   // final chunk carries usage
+}
+
+type ToolCallDelta struct {
+	Index     int    // which tool call (0-based)
+	ID        string // set on first fragment
+	Name      string // function name, set on first fragment
+	Arguments string // JSON fragment, accumulated across chunks
+}
+
+type StreamUsage struct {
+	PromptTokens     int
+	CompletionTokens int
 }
 
 type ToolDef struct {

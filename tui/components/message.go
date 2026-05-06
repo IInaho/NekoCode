@@ -7,6 +7,7 @@ type ChatMessage struct {
 	Content         string
 	RenderedContent string
 	Blocks          []ContentBlock
+	Footer          string // TUI metadata: duration, tokens — rendered separately from LLM content
 }
 
 func (m ChatMessage) ToMessageItem(sty *styles.Styles) Item {
@@ -19,6 +20,9 @@ func (m ChatMessage) ToMessageItem(sty *styles.Styles) Item {
 			item.SetRenderedContent(m.RenderedContent)
 		}
 		item.SetBlocks(m.Blocks)
+		if m.Footer != "" {
+			item.SetFooter(m.Footer)
+		}
 		return item
 	case "system":
 		item := NewSystemMessageItem(sty, m.Content)

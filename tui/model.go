@@ -12,12 +12,17 @@ import (
 
 // BotInterface is the contract any bot implementation must satisfy for the TUI.
 type BotInterface interface {
-	RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string)) (string, error)
+	RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string, batchIdx, batchTotal int)) (string, error)
 	ExecuteCommand(input string) (string, bool)
-	TokenUsage() (int, int)
+	TokenUsage() (prompt, completion int)
+	ContextTokens() int
+	Duration() string
 	CommandNames() []string
 	SetConfirmFn(types.ConfirmFunc)
 	SetPhaseFn(types.PhaseFunc)
+	Steer(msg string)
+	Abort()
+	SetStreamFn(fn func(delta string))
 	Provider() string
 	Model() string
 }
@@ -33,6 +38,8 @@ const (
 type doneMsg struct {
 	content    string
 	diffBlocks string
+	duration   string
+	tokens     string
 	err        error
 }
 
@@ -51,12 +58,14 @@ type Model struct {
 	Height   int
 	Ready    bool
 
-	Stream          *BlockStream
-	state           ChatState
-	processingStart time.Time
-	processingPhase string
-	Suggestions     *components.Suggestions
-	ConfirmBar      *components.ConfirmBar
+	Stream           *BlockStream
+	state            ChatState
+	processingStart  time.Time
+	processingPhase  string
+	lastStreamRender time.Time
+	Suggestions      *components.Suggestions
+	ConfirmBar       *components.ConfirmBar
+	Scrollbar        *components.Scrollbar
 
 	confirmCh chan types.ConfirmRequest
 }
@@ -78,6 +87,7 @@ func NewModel(b BotInterface) *Model {
 		Stream:      &BlockStream{},
 		Suggestions: components.NewSuggestions(&sty),
 		ConfirmBar:  components.NewConfirmBar(&sty),
+		Scrollbar:   components.NewScrollbar(&sty),
 		Width:       80,
 		Height:      24,
 		state:       StateReady,
@@ -92,9 +102,6 @@ func NewModel(b BotInterface) *Model {
 	b.SetPhaseFn(func(phase string) {
 		m.processingPhase = phase
 	})
-
-	used, budget := b.TokenUsage()
-	m.Header.SetTokens(used, budget)
 
 	return m
 }
@@ -126,7 +133,6 @@ func (m *Model) transitionTo(state ChatState) {
 		m.Messages.SetProcessing(true)
 		m.Input.SetSending(true)
 	case StateConfirming:
-		// ConfirmBar request is set by the caller; spinner/view react to the state.
 	}
 	m.resizeMessages()
 }

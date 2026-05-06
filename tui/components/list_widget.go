@@ -115,8 +115,7 @@ func (l *List) AtBottom() bool {
 		if totalHeight > l.height {
 			return false
 		}
-		item := l.getItem(idx)
-		itemHeight := item.height
+		itemHeight := l.items[idx].Height(l.width)
 		if l.gap > 0 && idx > l.offsetIdx {
 			itemHeight += l.gap
 		}
@@ -139,8 +138,7 @@ func (l *List) ScrollToBottom() {
 	var totalHeight int
 	var idx int
 	for idx = len(l.items) - 1; idx >= 0; idx-- {
-		item := l.getItem(idx)
-		itemHeight := item.height
+		itemHeight := l.items[idx].Height(l.width)
 		if l.gap > 0 && idx < len(l.items)-1 {
 			itemHeight += l.gap
 		}

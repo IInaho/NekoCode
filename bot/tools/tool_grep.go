@@ -11,6 +11,7 @@ import (
 type GrepTool struct{}
 
 func (t *GrepTool) Name() string { return "grep" }
+	func (t *GrepTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 
 func (t *GrepTool) Description() string {
 	return "基于 ripgrep 的内容搜索。在文件中搜索正则模式，返回匹配行及行号。支持文件过滤和上下文行数。"

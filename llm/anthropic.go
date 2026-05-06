@@ -1,13 +1,14 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"time"
+	"strings"
 )
 
 type Anthropic struct {
@@ -23,7 +24,7 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 		APIKey:      apiKey,
 		BaseURL:     "https://api.anthropic.com/v1",
 		Model:       model,
-		maxTokens:   4096,
+		maxTokens:   8192,
 		temperature: 0.7,
 	}
 }
@@ -69,6 +70,29 @@ type anthropicResponse struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
+}
+
+// --- Anthropic SSE streaming types ---
+
+type anthropicSSEEvent struct {
+	Type  string          `json:"type"`
+	Index int             `json:"index"`
+	Delta json.RawMessage `json:"delta"`
+	Usage *struct {
+		OutputTokens int `json:"output_tokens"`
+		InputTokens  int `json:"input_tokens"`
+	} `json:"usage"`
+	ContentBlock json.RawMessage `json:"content_block"`
+}
+
+type anthropicTextDelta struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type anthropicInputJSONDelta struct {
+	Type        string `json:"type"`
+	PartialJSON string `json:"partial_json"`
 }
 
 func toAnthropicTools(tools []ToolDef) []anthropicTool {
@@ -133,24 +157,26 @@ func toAnthropicMessages(messages []Message) ([]anthropicMsg, string) {
 	return result, systemPrompt
 }
 
-func (a *Anthropic) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
+func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream bool) (*anthropicRequest, error) {
 	anthropicMsgs, systemPrompt := toAnthropicMessages(messages)
-
-	body := anthropicRequest{
+	return &anthropicRequest{
 		Model:       a.Model,
 		MaxTokens:   a.maxTokens,
 		Temperature: a.temperature,
 		System:      systemPrompt,
 		Messages:    anthropicMsgs,
 		Tools:       toAnthropicTools(tools),
-		Stream:      false,
-	}
+		Stream:      stream,
+	}, nil
+}
 
-	jsonBody, err := json.Marshal(body)
+func (a *Anthropic) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
+	body, err := a.buildRequest(messages, tools, false)
 	if err != nil {
 		return nil, err
 	}
 
+	jsonBody, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, "POST", a.BaseURL+"/messages", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
@@ -159,7 +185,7 @@ func (a *Anthropic) Chat(ctx context.Context, messages []Message, tools []ToolDe
 	req.Header.Set("x-api-key", a.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	resp, err := SharedHTTPClientTimeout.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -222,20 +248,13 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 		defer close(tokenChan)
 		defer close(errChan)
 
-		anthropicMsgs, systemPrompt := toAnthropicMessages(messages)
-
-		body := anthropicRequest{
-			Model:       a.Model,
-			MaxTokens:   a.maxTokens,
-			Temperature: a.temperature,
-			System:      systemPrompt,
-			Messages:    anthropicMsgs,
-			Tools:       toAnthropicTools(tools),
-			Stream:      true,
+		body, err := a.buildRequest(messages, tools, true)
+		if err != nil {
+			errChan <- err
+			return
 		}
 
 		jsonBody, _ := json.Marshal(body)
-
 		req, err := http.NewRequestWithContext(ctx, "POST", a.BaseURL+"/messages", bytes.NewBuffer(jsonBody))
 		if err != nil {
 			errChan <- err
@@ -245,25 +264,89 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 		req.Header.Set("x-api-key", a.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 
-		resp, err := (&http.Client{Timeout: 0}).Do(req)
+		resp, err := SharedHTTPClient.Do(req)
 		if err != nil {
 			errChan <- err
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		reader := NewEventReader(resp.Body)
-		for {
-			chunk, err := reader.Read()
-			if err != nil {
-				if err != io.EOF {
-					errChan <- err
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			errChan <- fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(body))
+			return
+		}
+
+		scanner := bufio.NewScanner(resp.Body)
+		// Track tool use accumulators per content block index.
+		type toolAccum struct {
+			id   string
+			name string
+			args strings.Builder
+		}
+		toolAccums := make(map[int]*toolAccum)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+
+			var event anthropicSSEEvent
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				continue
+			}
+
+			switch event.Type {
+			case "content_block_start":
+				var cb anthropicContentBlock
+				if err := json.Unmarshal(event.ContentBlock, &cb); err != nil {
+					continue
 				}
-				return
+				if cb.Type == "tool_use" {
+					toolAccums[event.Index] = &toolAccum{
+						id:   cb.ID,
+						name: cb.Name,
+					}
+				}
+
+			case "content_block_delta":
+				// Try text_delta first.
+				var td anthropicTextDelta
+				if json.Unmarshal(event.Delta, &td) == nil && td.Type == "text_delta" {
+					tokenChan <- StreamToken{Content: td.Text}
+					continue
+				}
+				// Try input_json_delta.
+				var ijd anthropicInputJSONDelta
+				if json.Unmarshal(event.Delta, &ijd) == nil && ijd.Type == "input_json_delta" {
+					if acc := toolAccums[event.Index]; acc != nil {
+						acc.args.WriteString(ijd.PartialJSON)
+						tokenChan <- StreamToken{
+							ToolCallDelta: &ToolCallDelta{
+								Index:     event.Index,
+								ID:        acc.id,
+								Name:      acc.name,
+								Arguments: ijd.PartialJSON,
+							},
+						}
+					}
+				}
+
+			case "message_delta":
+				if event.Usage != nil && (event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0) {
+					tokenChan <- StreamToken{
+						Usage: &StreamUsage{
+							PromptTokens:     event.Usage.InputTokens,
+							CompletionTokens: event.Usage.OutputTokens,
+						},
+					}
+				}
 			}
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				tokenChan <- StreamToken{Content: chunk.Choices[0].Delta.Content}
-			}
+		}
+		if err := scanner.Err(); err != nil {
+			errChan <- err
 		}
 	}()
 

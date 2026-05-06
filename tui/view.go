@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -12,37 +10,52 @@ func (m *Model) View() tea.View {
 		return tea.NewView("Loading...")
 	}
 
-	var content strings.Builder
+	var parts []string
+
 	if m.Messages.Len() == 0 {
-		content.WriteString(m.Splash.View())
+		parts = append(parts, m.Splash.View())
 	} else {
-		content.WriteString(m.Header.View())
-		content.WriteString(m.Messages.View())
+		parts = append(parts, m.Header.View())
+
+		// Update scrollbar state from Messages list.
+		m.Scrollbar.Update(
+			m.Messages.TotalContentHeight(),
+			m.Messages.Height(),
+			m.Messages.ScrollPercent(),
+		)
+
+		// Messages + Scrollbar as independent horizontal pair.
+		msgView := lipgloss.NewStyle().Width(m.Width - 1).Render(m.Messages.View())
+		barView := m.Scrollbar.View()
+		row := msgView
+		if barView != "" {
+			row = lipgloss.JoinHorizontal(lipgloss.Top, msgView, barView)
+		}
+		parts = append(parts, row)
 	}
 
 	if m.state == StateConfirming {
 		if bar := m.ConfirmBar.View(m.Width); bar != "" {
-			content.WriteString("\n")
-			content.WriteString(bar)
+			parts = append(parts, bar)
 		}
 	}
 
-	contentStr := strings.TrimRight(content.String(), "\n")
-
 	if sug := m.Suggestions.View(m.Width); sug != "" {
-		contentStr += "\n" + sug
+		parts = append(parts, sug)
 	}
 
-	inputStr := m.Input.View()
-	fullView := contentStr + "\n\n" + inputStr
+	parts = append(parts, "", m.Input.View())
 
-	v := tea.NewView(fullView)
+	view := lipgloss.JoinVertical(lipgloss.Left, parts...)
+
+	v := tea.NewView(view)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 
 	c := m.Input.Cursor()
 	if c != nil {
-		c.Y += lipgloss.Height(contentStr) + 2
+		above := lipgloss.JoinVertical(lipgloss.Left, parts[:len(parts)-2]...)
+		c.Y += lipgloss.Height(above) + 2
 	}
 	v.Cursor = c
 

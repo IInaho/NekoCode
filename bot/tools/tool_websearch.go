@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -19,11 +21,12 @@ type WebSearchTool struct {
 
 func NewWebSearchTool() *WebSearchTool {
 	return &WebSearchTool{
-		client: &http.Client{Timeout: 12 * time.Second},
+		client: NewToolHTTPClient(12 * time.Second),
 	}
 }
 
-func (t *WebSearchTool) Name() string                                 { return "web_search" }
+func (t *WebSearchTool) Name() string                                  { return "web_search" }
+	func (t *WebSearchTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 func (t *WebSearchTool) DangerLevel(map[string]interface{}) DangerLevel { return LevelSafe }
 
 func (t *WebSearchTool) Description() string {
@@ -42,7 +45,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 		return "", fmt.Errorf("缺少 query 参数")
 	}
 
-	searchURL := "https://www.bing.com/search?q=" + url.QueryEscape(query) + "&cc=cn&setmkt=zh-CN"
+	searchURL := "https://www.bing.com/search?q=" + url.QueryEscape(query) + "&setmkt=zh-CN&count=15"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
@@ -68,7 +71,12 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 		return "未找到相关结果", nil
 	}
 
-	return formatSearchResults(results, query), nil
+	filtered := filterRelevant(results, query)
+	if len(filtered) == 0 {
+		filtered = results
+	}
+
+	return formatSearchResults(filtered, query), nil
 }
 
 type searchResult struct {
@@ -118,13 +126,29 @@ func parseBingResults(htmlStr string) []searchResult {
 				depth++
 				if a == atom.H2 {
 					inTitle = true
-				} else if a == atom.P || (a == atom.Div && inResult) {
-					inSnippet = true
 				} else if a == atom.A && hasAttr && inTitle {
 					for {
 						k, v, more := z.TagAttr()
 						if string(k) == "href" {
 							current.url = string(v)
+							break
+						}
+						if !more {
+							break
+						}
+					}
+				} else if a == atom.P || (a == atom.Div && inResult) {
+					inSnippet = true
+				}
+			} else {
+				// Also match b_ad results (sidebar/news results, class differs from b_algo).
+				if a == atom.Li && hasAttr {
+					for {
+						k, v, more := z.TagAttr()
+						if string(k) == "class" && (strings.Contains(string(v), "b_ad") || strings.Contains(string(v), "b_ans")) {
+							current = searchResult{}
+							inResult = true
+							depth = 0
 							break
 						}
 						if !more {
@@ -171,7 +195,109 @@ func parseBingResults(htmlStr string) []searchResult {
 		results = append(results, current)
 	}
 
-	return results
+	return deduplicate(results)
+}
+
+func deduplicate(results []searchResult) []searchResult {
+	seen := make(map[string]bool)
+	var out []searchResult
+	for _, r := range results {
+		key := r.title
+		if key == "" {
+			key = r.url
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func isCJK(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana)
+}
+
+func tokenize(s string) []string {
+	var tokens []string
+	seen := make(map[string]bool)
+
+	// Split on whitespace first, then bigram each segment.
+	for _, seg := range strings.Fields(s) {
+		seg = strings.ToLower(seg)
+		runes := []rune(seg)
+
+		// For short ASCII segments, keep as-is.
+		asciiOnly := true
+		for _, r := range runes {
+			if r > 127 {
+				asciiOnly = false
+				break
+			}
+		}
+		if asciiOnly {
+			if len(runes) >= 2 && !seen[seg] {
+				tokens = append(tokens, seg)
+				seen[seg] = true
+			}
+			continue
+		}
+
+		// For CJK segments, generate character bigrams.
+		if len(runes) == 1 {
+			if !seen[seg] {
+				tokens = append(tokens, seg)
+				seen[seg] = true
+			}
+			continue
+		}
+		for i := 0; i < len(runes)-1; i++ {
+			bg := string(runes[i : i+2])
+			if !seen[bg] {
+				tokens = append(tokens, bg)
+				seen[bg] = true
+			}
+		}
+	}
+	return tokens
+}
+
+func filterRelevant(results []searchResult, query string) []searchResult {
+	qTokens := tokenize(query)
+	if len(qTokens) == 0 {
+		return results
+	}
+
+	type scoredItem struct {
+		r searchResult
+		s int
+	}
+	var list []scoredItem
+	for _, r := range results {
+		text := strings.ToLower(r.title + " " + r.snippet)
+		s := 0
+		for _, t := range qTokens {
+			if strings.Contains(text, t) {
+				s++
+			}
+		}
+		if s > 0 {
+			list = append(list, scoredItem{r, s})
+		}
+	}
+
+	// If filtering removed everything, return original.
+	if len(list) == 0 {
+		return results
+	}
+
+	sort.Slice(list, func(i, j int) bool { return list[i].s > list[j].s })
+
+	out := make([]searchResult, len(list))
+	for i, it := range list {
+		out[i] = it.r
+	}
+	return out
 }
 
 func formatSearchResults(results []searchResult, query string) string {
@@ -180,11 +306,11 @@ func formatSearchResults(results []searchResult, query string) string {
 
 	count := 0
 	for _, r := range results {
-		if r.title == "" || count >= 5 {
+		if r.title == "" || count >= 8 {
 			continue
 		}
 
-		snippet := truncateByRune(strings.TrimSpace(r.snippet), 200)
+		snippet := TruncateByRune(strings.TrimSpace(r.snippet), 200)
 
 		b.WriteString(fmt.Sprintf("\n%d. %s\n", count+1, r.title))
 		if r.url != "" {
@@ -200,5 +326,5 @@ func formatSearchResults(results []searchResult, query string) string {
 		return "未找到相关结果"
 	}
 
-	return truncateByRune(b.String(), 2000)
+	return TruncateByRune(b.String(), 3000)
 }

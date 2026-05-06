@@ -14,6 +14,7 @@ import (
 type BashTool struct{}
 
 func (t *BashTool) Name() string { return "bash" }
+	func (t *BashTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
 
 func (t *BashTool) Description() string {
 	return "执行 shell 命令"
@@ -78,9 +79,11 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	cmd.Dir, _ = os.Getwd()
 	output, err := cmd.CombinedOutput()
 
+	cleaned := StripAnsi(string(output))
+
 	if err != nil {
-		return "", fmt.Errorf("命令执行失败: %v\n输出: %s", err, string(output))
+		return "", fmt.Errorf("命令执行失败: %v\n输出: %s", err, cleaned)
 	}
 
-	return string(output), nil
+	return cleaned, nil
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // OpenAICompatible handles any OpenAI-compatible API (OpenAI, GLM, DeepSeek, etc.).
@@ -68,7 +67,7 @@ func (c *OpenAICompatible) Chat(ctx context.Context, messages []Message, tools [
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
 
-	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	resp, err := SharedHTTPClientTimeout.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +112,7 @@ func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, t
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
 
-	resp, err := (&http.Client{Timeout: 0}).Do(req)
+	resp, err := SharedHTTPClient.Do(req)
 	if err != nil {
 		errChan := make(chan error, 1)
 		errChan <- err
@@ -147,10 +146,19 @@ func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, t
 				continue
 			}
 			delta := chunk.Choices[0].Delta
-			if delta.Content != "" || delta.ReasoningContent != "" {
+			token := StreamToken{
+				Content:          delta.Content,
+				ReasoningContent: delta.ReasoningContent,
+				Usage:            chunk.Usage,
+			}
+			if token.Content != "" || token.ReasoningContent != "" || token.Usage != nil {
+				tokenChan <- token
+			}
+			for _, tc := range delta.ToolCalls {
 				tokenChan <- StreamToken{
-					Content:          delta.Content,
-					ReasoningContent: delta.ReasoningContent,
+					ToolCallDelta: &ToolCallDelta{
+						Index: tc.Index, ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments,
+					},
 				}
 			}
 		}

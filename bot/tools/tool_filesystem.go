@@ -2,17 +2,27 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 )
 
-type FileSystemTool struct{}
+type FileSystemTool struct {
+	mu       sync.RWMutex
+	readHash map[string]string // path → sha256[:16]
+}
 
-func (t *FileSystemTool) Name() string { return "filesystem" }
+func (t *FileSystemTool) Name() string        { return "filesystem" }
+func (t *FileSystemTool) Description() string { return "文件系统操作：读取、写入、列出目录" }
 
-func (t *FileSystemTool) Description() string {
-	return "文件系统操作：读取、写入、列出目录"
+func (t *FileSystemTool) ExecutionMode(args map[string]interface{}) ExecutionMode {
+	if op, ok := args["operation"].(string); ok && (op == "read" || op == "list") {
+		return ModeParallel
+	}
+	return ModeSequential
 }
 
 func (t *FileSystemTool) Parameters() []Parameter {
@@ -42,11 +52,7 @@ func (t *FileSystemTool) Execute(ctx context.Context, args map[string]interface{
 
 	switch operation {
 	case "read":
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("读取文件失败: %v", err)
-		}
-		return string(content), nil
+		return t.readFile(path)
 
 	case "write":
 		content, ok := args["content"].(string)
@@ -60,6 +66,10 @@ func (t *FileSystemTool) Execute(ctx context.Context, args map[string]interface{
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			return "", fmt.Errorf("写入文件失败: %v", err)
 		}
+		// Invalidate read cache on write.
+		t.mu.Lock()
+		delete(t.readHash, path)
+		t.mu.Unlock()
 		return fmt.Sprintf("已写入文件: %s", path), nil
 
 	case "list":
@@ -81,6 +91,46 @@ func (t *FileSystemTool) Execute(ctx context.Context, args map[string]interface{
 	default:
 		return "", fmt.Errorf("unknown operation: %s", operation)
 	}
+}
+
+func (t *FileSystemTool) readFile(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("读取文件失败: %v", err)
+	}
+
+	t.mu.Lock()
+	if t.readHash == nil {
+		t.readHash = make(map[string]string)
+	}
+	t.mu.Unlock()
+
+	// Deduplicate: if file unchanged since last read, return a short reference.
+	hash := fmt.Sprintf("%x", sha256.Sum256(content))[:16]
+	t.mu.RLock()
+	prevHash, exists := t.readHash[path]
+	t.mu.RUnlock()
+	if exists && prevHash == hash {
+		return fmt.Sprintf("[未变更] %s — 内容与上次读取相同，无需重复读取", filepath.Base(path)), nil
+	}
+	t.mu.Lock()
+	t.readHash[path] = hash
+	t.mu.Unlock()
+
+	text := StripAnsi(string(content))
+	totalLines := strings.Count(text, "\n") + 1
+
+	// Smart truncation: keep at most ~2500 chars, which is enough for
+	// imports + top-level declarations + a few functions.
+	const maxChars = 2500
+	if len([]rune(text)) > maxChars {
+		runes := []rune(text)
+		text = string(runes[:maxChars])
+		text += fmt.Sprintf("\n\n[文件共 %d 行，已截断。使用 grep 搜索 %s 中的具体内容]",
+			totalLines, filepath.Base(path))
+	}
+
+	return text, nil
 }
 
 func humanSize(n int64) string {

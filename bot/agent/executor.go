@@ -1,10 +1,11 @@
-// 动作执行：根据 ReasoningResult 调度具体行为。
-// ActionChat → 直接返回文本；ActionExecuteTool → 解析工具调用、
-// 检查 DangerLevel、必要时通过 confirmFn 征求确认、执行工具。
+// 工具执行器：单工具执行 + 批量并行/串行调度。
+// ExecutionMode 由 Tool 接口声明；批次中有任何 Sequential 工具则整批串行。
 package agent
 
 import (
+	"context"
 	"fmt"
+	"sync"
 
 	"primusbot/bot/tools"
 	"primusbot/bot/types"
@@ -19,98 +20,114 @@ type ActionResult struct {
 	ShouldRetry bool
 }
 
-func (a *Agent) Execute(reasoning *ReasoningResult) *ActionResult {
-	switch reasoning.Action {
-	case ActionExecuteTool:
-		return a.executeTool(reasoning.ActionInput)
-	case ActionChat:
-		return &ActionResult{
-			Thought: "直接回复用户消息",
-			Action:  ActionChat,
-			Output:  reasoning.ActionInput,
-			IsFinal: true,
-		}
-	case ActionFinish:
-		return &ActionResult{
-			Thought: "任务完成",
-			Action:  ActionFinish,
-			Output:  reasoning.ActionInput,
-			IsFinal: true,
-		}
-	default:
-		return &ActionResult{
-			Thought: "未知操作类型",
-			Action:  ActionChat,
-			Output:  "抱歉，我不确定如何处理这个请求",
-			IsFinal: true,
-		}
+type ToolCallResult struct {
+	ID     string
+	Name   string
+	Output string
+	Error  string
+}
+
+type Executor struct {
+	registry   *tools.Registry
+	confirmFn  types.ConfirmFunc
+	phaseFn    types.PhaseFunc
+	maxWorkers int
+}
+
+func NewExecutor(r *tools.Registry) *Executor {
+	return &Executor{
+		registry:   r,
+		maxWorkers: 10,
 	}
 }
 
-func (a *Agent) executeTool(input string) *ActionResult {
-	toolName, args, err := tools.ParseCall(input)
-	if err != nil {
-		return &ActionResult{
-			Thought:     "工具调用格式错误",
-			Action:      ActionExecuteTool,
-			Error:       err.Error(),
-			ShouldRetry: true,
+func (e *Executor) SetConfirmFn(fn types.ConfirmFunc) { e.confirmFn = fn }
+func (e *Executor) SetPhaseFn(fn types.PhaseFunc)     { e.phaseFn = fn }
+
+// ExecuteBatch runs all tool calls. If any tool has ModeSequential, the whole
+// batch runs serially; otherwise they run concurrently via a worker pool.
+func (e *Executor) ExecuteBatch(ctx context.Context, calls []ToolCallItem) []ToolCallResult {
+	if len(calls) == 0 {
+		return nil
+	}
+	if e.needsSequential(calls) {
+		return e.runSequential(ctx, calls)
+	}
+	return e.runParallel(ctx, calls)
+}
+
+func (e *Executor) needsSequential(calls []ToolCallItem) bool {
+	for _, c := range calls {
+		t, err := e.registry.Get(c.Name)
+		if err != nil {
+			continue
+		}
+		if t.ExecutionMode(c.Args) == tools.ModeSequential {
+			return true
 		}
 	}
+	return false
+}
 
-	tool, err := a.toolRegistry.Get(toolName)
+func (e *Executor) runSequential(ctx context.Context, calls []ToolCallItem) []ToolCallResult {
+	results := make([]ToolCallResult, len(calls))
+	for i, c := range calls {
+		results[i] = e.executeOne(ctx, c)
+	}
+	return results
+}
+
+func (e *Executor) runParallel(ctx context.Context, calls []ToolCallItem) []ToolCallResult {
+	results := make([]ToolCallResult, len(calls))
+	sem := make(chan struct{}, e.maxWorkers)
+	var wg sync.WaitGroup
+
+	for i, call := range calls {
+		wg.Add(1)
+		go func(idx int, tc ToolCallItem) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[idx] = e.executeOne(ctx, tc)
+		}(i, call)
+	}
+	wg.Wait()
+	return results
+}
+
+func (e *Executor) executeOne(ctx context.Context, tc ToolCallItem) ToolCallResult {
+	tool, err := e.registry.Get(tc.Name)
 	if err != nil {
-		return &ActionResult{
-			Thought:     "工具不存在",
-			Action:      ActionExecuteTool,
-			Error:       err.Error(),
-			ShouldRetry: true,
-		}
+		return ToolCallResult{ID: tc.ID, Name: tc.Name, Error: err.Error()}
 	}
 
-	level := tool.DangerLevel(args)
+	level := tool.DangerLevel(tc.Args)
 	if level == tools.LevelForbidden {
-		return &ActionResult{
-			Thought:     "禁止执行危险操作",
-			Action:      ActionExecuteTool,
-			Error:       fmt.Sprintf("操作被拒绝: %s 属于禁止操作", toolName),
-			ShouldRetry: false,
+		return ToolCallResult{
+			ID: tc.ID, Name: tc.Name,
+			Error: fmt.Sprintf("操作被拒绝: %s 属于禁止操作", tc.Name),
 		}
 	}
 
-	if level >= tools.LevelWrite && a.confirmFn != nil {
-		if !a.confirmFn(types.ConfirmRequest{
-			ToolName: toolName,
-			Args:     args,
-			Level:    level,
+	if level >= tools.LevelWrite && e.confirmFn != nil {
+		if !e.confirmFn(types.ConfirmRequest{
+			ToolName: tc.Name, Args: tc.Args, Level: level,
 			Response: make(chan bool, 1),
 		}) {
-			return &ActionResult{
-				Thought:     "用户取消了操作",
-				Action:      ActionExecuteTool,
-				Error:       "操作被用户取消",
-				ShouldRetry: false,
+			return ToolCallResult{
+				ID: tc.ID, Name: tc.Name,
+				Error: "操作被用户取消",
 			}
 		}
 	}
 
-	if a.phaseFn != nil {
-		a.phaseFn("Running " + toolName)
-		}
-		output, err := tool.Execute(a.ctx, args)
-		if err != nil {
-		return &ActionResult{
-			Thought:     "工具执行失败",
-			Action:      ActionExecuteTool,
-			Error:       err.Error(),
-			ShouldRetry: true,
-		}
+	if e.phaseFn != nil {
+		e.phaseFn("Running " + tc.Name)
 	}
 
-	return &ActionResult{
-		Thought: "工具执行成功",
-		Action:  ActionExecuteTool,
-		Output:  output,
-		IsFinal: false,
+	output, err := tool.Execute(ctx, tc.Args)
+	if err != nil {
+		return ToolCallResult{ID: tc.ID, Name: tc.Name, Error: err.Error()}
 	}
+	return ToolCallResult{ID: tc.ID, Name: tc.Name, Output: output}
 }

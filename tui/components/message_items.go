@@ -1,16 +1,21 @@
 package components
 
 import (
+	"image/color"
 	"strings"
 	"sync"
 
+	"charm.land/lipgloss/v2"
 	"primusbot/tui/styles"
 )
 
 const (
 	maxTextWidth       = 120
 	messageLeftPadding = 2
+	barOverhead        = 3
 )
+
+var barBorder = lipgloss.Border{Left: "▐"}
 
 type cachedRender struct {
 	rendered string
@@ -24,6 +29,24 @@ func cappedWidth(available int) int {
 
 func CappedWidth(available int) int {
 	return cappedWidth(available)
+}
+
+func stripLeadingSpaces(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimLeft(line, " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func thickLeftBar(content string, barColor color.Color, width int) string {
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderStyle(barBorder).
+		BorderForeground(barColor).
+		PaddingLeft(1).PaddingRight(1).
+		Width(width).MaxWidth(width).
+		Render(content)
 }
 
 // --- UserMessageItem ---
@@ -40,31 +63,28 @@ func NewUserMessageItem(sty *styles.Styles, content string) *UserMessageItem {
 
 func (m *UserMessageItem) Render(width int) string {
 	cw := cappedWidth(width)
-
 	if m.cache.width == cw && m.cache.rendered != "" {
 		return m.cache.rendered
 	}
-
-	content := strings.TrimSpace(m.content)
-	content = styles.RenderMarkdownWithWidth(content, cw)
-
-	var s strings.Builder
-	s.WriteString(m.sty.Yellow.Render(styles.Vertical+" ") + m.sty.Yellow.Bold(true).Render("You") + "\n")
-
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		s.WriteString(m.sty.Yellow.Render(styles.Vertical+" ") + line + "\n")
-	}
-
-	out := strings.TrimRight(s.String(), "\n")
+	contentW := cw - barOverhead
+	header := m.sty.Yellow.Bold(true).Render("You")
+	body := strings.TrimSpace(styles.RenderMarkdownWithWidth(strings.TrimSpace(m.content), contentW))
+	parts := []string{header, "", body}
+	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	out := thickLeftBar(stripLeadingSpaces(strings.TrimSpace(joined)), lipgloss.Color("#c9a96e"), cw)
 	m.cache.rendered = out
 	m.cache.width = cw
 	m.cache.height = strings.Count(out, "\n") + 1
-	return m.cache.rendered
+	return out
 }
 
 func (m *UserMessageItem) Height(width int) int {
-	return strings.Count(m.Render(width), "\n") + 1
+	cw := cappedWidth(width)
+	if m.cache.height > 0 && m.cache.width == cw {
+		return m.cache.height
+	}
+	lines := strings.Count(m.content, "\n") + 1
+	return lines + 3
 }
 
 // --- AssistantMessageItem ---
@@ -72,10 +92,11 @@ func (m *UserMessageItem) Height(width int) int {
 type AssistantMessageItem struct {
 	content         string
 	renderedContent string
-	blocks           []ContentBlock
-	sty              *styles.Styles
-	cache            cachedRender
-	mu               sync.Mutex
+	footer          string
+	blocks          []ContentBlock
+	sty             *styles.Styles
+	cache           cachedRender
+	mu              sync.Mutex
 }
 
 func NewAssistantMessageItem(sty *styles.Styles, content string) *AssistantMessageItem {
@@ -84,56 +105,79 @@ func NewAssistantMessageItem(sty *styles.Styles, content string) *AssistantMessa
 
 func (m *AssistantMessageItem) SetRenderedContent(content string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.renderedContent = content
 	m.cache = cachedRender{}
+	m.mu.Unlock()
 }
 
 func (m *AssistantMessageItem) SetBlocks(blocks []ContentBlock) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.blocks = blocks
 	m.cache = cachedRender{}
+	m.mu.Unlock()
 }
 
+func (m *AssistantMessageItem) SetFooter(footer string) {
+	m.mu.Lock()
+	m.footer = footer
+	m.cache = cachedRender{}
+	m.mu.Unlock()
+}
 
 func (m *AssistantMessageItem) Render(width int) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	cw := cappedWidth(width)
+	contentW := cw - barOverhead
 
-	green := m.sty.Green.Render(styles.Vertical)
-	var sb strings.Builder
-	sb.WriteString(green + " " + m.sty.Primary.Bold(true).Render("Assistant") + "\n")
+	header := m.sty.Primary.Bold(true).Render("Assistant")
+	msgParts := []string{header, ""}
 
-	// Render content blocks (tool calls, thinking, etc.)
-	for _, b := range m.blocks {
-		rendered := RenderBlock(b, cw, m.sty)
-		for _, line := range strings.Split(rendered, "\n") {
-			sb.WriteString(green + " " + line + "\n")
+	if len(m.blocks) > 0 {
+		cards := RenderBlocks(m.blocks, contentW, m.sty)
+		if cards != "" {
+			msgParts = append(msgParts, cards)
 		}
 	}
 
-	// Render final text response
-	sb.WriteString(green + "\n")
-	content := m.content
+	raw := m.content
 	if m.renderedContent != "" {
-		content = m.renderedContent
+		raw = m.renderedContent
 	}
-	content = strings.TrimSpace(content)
-	content = styles.RenderMarkdownWithWidth(content, cw)
-	for _, line := range strings.Split(content, "\n") {
-		sb.WriteString(green + " " + line + "\n")
+	body := strings.TrimSpace(styles.RenderMarkdownWithWidth(strings.TrimSpace(raw), contentW))
+	if body != "" {
+		msgParts = append(msgParts, body)
 	}
 
-	return strings.TrimRight(sb.String(), "\n")
+	if m.footer != "" {
+		msgParts = append(msgParts, "", styles.SubtleStyle.Render(m.footer))
+	}
+
+	msgBlock := thickLeftBar(stripLeadingSpaces(strings.TrimSpace(lipgloss.JoinVertical(lipgloss.Left, msgParts...))), lipgloss.Color("#4ec9b0"), cw)
+
+	out := msgBlock
+	m.cache.rendered = out
+	m.cache.width = cw
+	m.cache.height = strings.Count(out, "\n") + 1
+	return out
 }
 
 func (m *AssistantMessageItem) Height(width int) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return strings.Count(m.Render(width), "\n") + 1
+	cw := cappedWidth(width)
+	if m.cache.height > 0 && m.cache.width == cw {
+		return m.cache.height
+	}
+	lines := strings.Count(m.content, "\n") + 1
+	for range m.blocks {
+		lines += 2
+	}
+	if m.footer != "" {
+		lines += 3
+	}
+	return lines + 3
 }
 
 // --- SystemMessageItem ---
@@ -156,28 +200,30 @@ func (m *SystemMessageItem) SetRenderedContent(content string) {
 
 func (m *SystemMessageItem) Render(width int) string {
 	cw := cappedWidth(width)
-
 	if m.cache.width == cw && m.cache.rendered != "" {
 		return m.cache.rendered
 	}
-
+	contentW := cw - barOverhead
 	content := m.renderedContent
 	if content == "" {
-		content = strings.TrimSpace(m.content)
+		content = styles.RenderMarkdownWithWidth(strings.TrimSpace(m.content), contentW)
 	}
-
-	var s strings.Builder
-	s.WriteString(m.sty.Blue.Render(styles.Vertical+" ") + m.sty.Blue.Bold(true).Render(".") + " " + content)
-
-	out := s.String()
+	header := m.sty.Blue.Bold(true).Render("·")
+	parts := []string{header, "", content}
+	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	out := thickLeftBar(stripLeadingSpaces(strings.TrimSpace(joined)), lipgloss.Color("#7a8ba0"), cw)
 	m.cache.rendered = out
 	m.cache.width = cw
 	m.cache.height = strings.Count(out, "\n") + 1
-	return m.cache.rendered
+	return out
 }
 
 func (m *SystemMessageItem) Height(width int) int {
-	return strings.Count(m.Render(width), "\n") + 1
+	cw := cappedWidth(width)
+	if m.cache.height > 0 && m.cache.width == cw {
+		return m.cache.height
+	}
+	return strings.Count(m.content, "\n") + 3
 }
 
 // --- ErrorMessageItem ---
@@ -194,23 +240,25 @@ func NewErrorMessageItem(sty *styles.Styles, content string) *ErrorMessageItem {
 
 func (m *ErrorMessageItem) Render(width int) string {
 	cw := cappedWidth(width)
-
 	if m.cache.width == cw && m.cache.rendered != "" {
 		return m.cache.rendered
 	}
-
-	content := strings.TrimSpace(m.content)
-
-	var s strings.Builder
-	s.WriteString(m.sty.Red.Render(styles.Vertical+" ") + m.sty.Red.Bold(true).Render("!") + " " + content)
-
-	out := s.String()
+	contentW := cw - barOverhead
+	body := strings.TrimSpace(styles.RenderMarkdownWithWidth(strings.TrimSpace(m.content), contentW))
+	header := m.sty.Red.Bold(true).Render("!")
+	parts := []string{header, "", body}
+	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	out := thickLeftBar(stripLeadingSpaces(strings.TrimSpace(joined)), lipgloss.Color("#e06c75"), cw)
 	m.cache.rendered = out
 	m.cache.width = cw
 	m.cache.height = strings.Count(out, "\n") + 1
-	return m.cache.rendered
+	return out
 }
 
 func (m *ErrorMessageItem) Height(width int) int {
-	return strings.Count(m.Render(width), "\n") + 1
+	cw := cappedWidth(width)
+	if m.cache.height > 0 && m.cache.width == cw {
+		return m.cache.height
+	}
+	return strings.Count(m.content, "\n") + 3
 }

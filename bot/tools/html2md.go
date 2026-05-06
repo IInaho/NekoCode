@@ -12,6 +12,7 @@ func html2md(rawHTML string) string {
 	z := html.NewTokenizer(strings.NewReader(rawHTML))
 	var linkHref string
 	skipStack := 0
+	var last byte // track last byte to avoid b.String() calls in ensureNewline
 
 	for {
 		tt := z.Next()
@@ -36,7 +37,11 @@ func html2md(rawHTML string) string {
 
 		switch tt {
 		case html.TextToken:
-			b.WriteString(string(z.Text()))
+			t := string(z.Text())
+			if len(t) > 0 {
+				last = t[len(t)-1]
+			}
+			b.WriteString(t)
 
 		case html.StartTagToken:
 			name, hasAttr := z.TagName()
@@ -49,27 +54,34 @@ func html2md(rawHTML string) string {
 
 			switch a {
 			case atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6:
-				ensureNewline(&b)
+				ensureNewline(&b, &last)
 				b.WriteString(strings.Repeat("#", headingLevel(a)) + " ")
 			case atom.P, atom.Div, atom.Section, atom.Article:
-				ensureNewline(&b)
+				ensureNewline(&b, &last)
 			case atom.Br:
 				b.WriteByte('\n')
+				last = '\n'
 			case atom.Li:
 				b.WriteString("\n- ")
+				last = ' '
 			case atom.Code:
 				b.WriteByte('`')
+				last = '`'
 			case atom.Pre:
 				b.WriteString("\n```\n")
+				last = '\n'
 			case atom.Strong, atom.B:
 				b.WriteString("**")
+				last = '*'
 			case atom.Em, atom.I:
 				b.WriteByte('*')
+				last = '*'
 			case atom.A:
 				if attrs != nil {
 					linkHref = attrs["href"]
 				}
 				b.WriteByte('[')
+				last = '['
 			case atom.Img:
 				alt := "image"
 				src := ""
@@ -80,12 +92,15 @@ func html2md(rawHTML string) string {
 					src = attrs["src"]
 				}
 				b.WriteString("\n![" + alt + "](" + src + ")\n")
+				last = '\n'
 			case atom.Hr:
 				b.WriteString("\n---\n")
+				last = '\n'
 			case atom.Blockquote:
 				b.WriteString("\n> ")
+				last = ' '
 			case atom.Ul, atom.Ol:
-				ensureNewline(&b)
+				ensureNewline(&b, &last)
 			case atom.Script, atom.Style, atom.Svg, atom.Nav, atom.Footer, atom.Header, atom.Aside, atom.Noscript:
 				skipStack++
 			}
@@ -96,21 +111,26 @@ func html2md(rawHTML string) string {
 			switch a {
 			case atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6:
 				b.WriteString("\n\n")
+				last = '\n'
 			case atom.P, atom.Div, atom.Section, atom.Article:
 				b.WriteString("\n\n")
+				last = '\n'
 			case atom.Code:
 				b.WriteByte('`')
+				last = '`'
 			case atom.Pre:
 				b.WriteString("\n```\n")
+				last = '\n'
 			case atom.Strong, atom.B:
 				b.WriteString("**")
+				last = '*'
 			case atom.Em, atom.I:
 				b.WriteByte('*')
+				last = '*'
 			case atom.A:
 				b.WriteString("](" + linkHref + ")")
+				last = ')'
 				linkHref = ""
-			case atom.Li:
-				// newline already emitted by start tag's "\n- " prefix
 			}
 
 		case html.SelfClosingTagToken:
@@ -125,8 +145,10 @@ func html2md(rawHTML string) string {
 			switch a {
 			case atom.Br:
 				b.WriteByte('\n')
+				last = '\n'
 			case atom.Hr:
 				b.WriteString("\n---\n")
+				last = '\n'
 			case atom.Img:
 				alt := "image"
 				src := ""
@@ -137,6 +159,7 @@ func html2md(rawHTML string) string {
 					src = attrs["src"]
 				}
 				b.WriteString("\n![" + alt + "](" + src + ")\n")
+				last = '\n'
 			}
 		}
 	}
@@ -144,13 +167,10 @@ func html2md(rawHTML string) string {
 	return collapseBlankLines(strings.TrimSpace(b.String()))
 }
 
-func ensureNewline(b *strings.Builder) {
-	s := b.String()
-	if len(s) == 0 {
-		return
-	}
-	if s[len(s)-1] != '\n' {
+func ensureNewline(b *strings.Builder, last *byte) {
+	if *last != 0 && *last != '\n' {
 		b.WriteByte('\n')
+		*last = '\n'
 	}
 }
 

@@ -16,20 +16,18 @@ type WebFetchTool struct {
 }
 
 func NewWebFetchTool() *WebFetchTool {
-	return &WebFetchTool{
-		client: &http.Client{
-			Timeout: 15 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 5 {
-					return fmt.Errorf("重定向次数过多")
-				}
-				return nil
-			},
-		},
+	c := NewToolHTTPClient(15 * time.Second)
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return fmt.Errorf("重定向次数过多")
+		}
+		return nil
 	}
+	return &WebFetchTool{client: c}
 }
 
 func (t *WebFetchTool) Name() string        { return "web_fetch" }
+	func (t *WebFetchTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 func (t *WebFetchTool) DangerLevel(map[string]interface{}) DangerLevel { return LevelSafe }
 
 func (t *WebFetchTool) Description() string {
@@ -85,6 +83,8 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		content = string(body)
 	}
 
+	content = StripAnsi(content)
+
 	if content == "" {
 		return "页面内容为空", nil
 	}
@@ -93,7 +93,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		content = extractRelevant(content, prompt)
 	}
 
-	content = truncateByRune(content, 3000)
+	content = TruncateByRune(content, 3000)
 	return content, nil
 }
 

@@ -10,6 +10,7 @@ import (
 type GlobTool struct{}
 
 func (t *GlobTool) Name() string { return "glob" }
+	func (t *GlobTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 
 func (t *GlobTool) Description() string {
 	return "根据模式查找文件，如 *.go, **/*.ts 等"

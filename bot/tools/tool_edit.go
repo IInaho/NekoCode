@@ -13,6 +13,7 @@ import (
 type EditTool struct{}
 
 func (t *EditTool) Name() string { return "edit" }
+	func (t *EditTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
 
 func (t *EditTool) Description() string {
 	return "精确编辑文件：查找并替换文件中首次出现的字符串。old_string 必须与文件内容精确匹配（含缩进和换行）。失败时返回文件内容帮助定位差异。"

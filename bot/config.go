@@ -20,7 +20,7 @@ var DefaultConfig = Config{
 	Provider:    "openai",
 	Model:       "gpt-4",
 	BaseURL:     "https://api.openai.com/v1",
-	TokenBudget: 64000,
+	TokenBudget: 128000,
 }
 
 func LoadConfig() (*Config, error) {
@@ -36,7 +36,7 @@ func LoadConfig() (*Config, error) {
 		return &DefaultConfig, nil
 	}
 
-	var cfg Config
+	cfg := DefaultConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return &DefaultConfig, nil
 	}
