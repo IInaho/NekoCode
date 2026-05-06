@@ -100,7 +100,7 @@ func NewModel(b BotInterface) *Model {
 	})
 
 	b.SetPhaseFn(func(phase string) {
-		m.processingPhase = phase
+		m.setPhase(phase)
 	})
 
 	return m
@@ -122,13 +122,14 @@ func (m *Model) transitionTo(state ChatState) {
 	m.state = state
 	switch state {
 	case StateReady:
+			m.setPhase(PhaseReady)
 		m.Messages.SetProcessing(false)
 		m.Input.SetSending(false)
 		m.ConfirmBar.Clear()
 	case StateProcessing:
 		m.processingStart = time.Now()
-		m.processingPhase = "Thinking"
-		m.Messages.SetProcessingStatus("Thinking")
+		m.setPhase(PhaseThinking)
+		m.Messages.SetProcessingStatus(PhaseThinking)
 		m.Stream.Reset()
 		m.Messages.SetProcessing(true)
 		m.Input.SetSending(true)

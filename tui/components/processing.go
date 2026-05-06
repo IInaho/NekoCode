@@ -85,7 +85,7 @@ func (p *ProcessingItem) Render(width int) string {
 
 	return p.sty.Green.Render(styles.Vertical+" ") +
 		p.sty.Green.Render(styles.Fisheye) + " " +
-		spinnerDisplay + " " +
+		spinnerDisplay +
 		p.sty.Subtle.Render(label) +
 		tokenPart +
 		p.cachedTool +

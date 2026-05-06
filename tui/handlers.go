@@ -89,6 +89,10 @@ func (m *Model) handleDone(msg doneMsg) tea.Cmd {
 			}
 		}
 		blocks := m.Stream.Finalize()
+			// Drop last BlockThinking — it is the final response, already in Content.
+			if len(blocks) > 0 && blocks[len(blocks)-1].Type == components.BlockThinking {
+				blocks = blocks[:len(blocks)-1]
+			}
 		m.Messages.AddMessage(components.ChatMessage{
 			Role:    "assistant",
 			Content: content,

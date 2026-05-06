@@ -62,10 +62,16 @@ func renderToolLine(b ContentBlock, width int, sty *styles.Styles) string {
 }
 
 func renderBlockThinking(b ContentBlock, sty *styles.Styles) string {
-	if b.Collapsed {
-		return sty.Subtle.Render("··· " + b.Content)
+	text := strings.TrimSpace(b.Content)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = sty.Subtle.Render("💭 " + line)
+		} else {
+			lines[i] = sty.Subtle.Render("   " + line)
+		}
 	}
-	return sty.Subtle.Render(b.Content)
+	return strings.Join(lines, "\n")
 }
 
 func renderBlockText(b ContentBlock, _ *styles.Styles) string {
@@ -94,11 +100,16 @@ func RenderBlocks(blocks []ContentBlock, width int, sty *styles.Styles) string {
 	}
 
 	var lines []string
+	prevWasTool := false
 	for i, b := range blocks {
 		if b.BatchTotal > 1 && b.BatchIdx == 1 {
 			lines = append(lines, toolAccent.Render(fmt.Sprintf("⚡ %d tools in parallel", b.BatchTotal)))
 		}
+		if b.Type == BlockThinking && prevWasTool && len(lines) > 0 {
+			lines = append(lines, "")
+		}
 		lines = append(lines, RenderBlock(b, cardW, sty))
+		prevWasTool = b.Type == BlockToolCall
 		if b.BatchTotal > 1 && b.BatchIdx == b.BatchTotal && i < len(blocks)-1 {
 			lines = append(lines, "")
 		}

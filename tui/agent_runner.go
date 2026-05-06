@@ -34,10 +34,6 @@ func (m *Model) startAgent(value string) tea.Cmd {
 	m.Input.SetFollow(true)
 	m.transitionTo(StateProcessing)
 
-	m.Bot.SetStreamFn(func(delta string) {
-		m.Stream.AppendText(delta)
-	})
-
 	return tea.Batch(
 		m.Spinner.Tick,
 		listenConfirm(m.confirmCh),
@@ -52,8 +48,20 @@ func (m *Model) startAgent(value string) tea.Cmd {
 			var diffs []string
 
 			result, err := m.Bot.RunAgent(value, func(step int, thought, action, toolName, toolArgs, output string, batchIdx, batchTotal int) {
+				if action == "think" {
+					m.Stream.Append(components.ContentBlock{
+						Type:    components.BlockThinking,
+						Content: output,
+					})
+					return
+				}
+
 				if action == "chat" {
 					finalResponse = output
+					m.Stream.Append(components.ContentBlock{
+						Type:    components.BlockThinking,
+						Content: output,
+					})
 					return
 				}
 

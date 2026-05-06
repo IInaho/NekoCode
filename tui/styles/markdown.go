@@ -11,18 +11,15 @@ var zeroMarginStyle = []byte(`{"document":{"margin":0}}`)
 var (
 	mu        sync.Mutex
 	renderers = map[int]*glamour.TermRenderer{}
-	warmedUp  bool
 )
 
 func Warmup() {
 	mu.Lock()
 	defer mu.Unlock()
-	if warmedUp {
-		return
-	}
+	renderers = map[int]*glamour.TermRenderer{}
 	for w := 40; w <= 160; w++ {
 		r, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
+			glamour.WithStandardStyle("tokyo-night"),
 			glamour.WithStylesFromJSONBytes(zeroMarginStyle),
 			glamour.WithWordWrap(w),
 		)
@@ -31,7 +28,6 @@ func Warmup() {
 		}
 		renderers[w] = r
 	}
-	warmedUp = true
 }
 
 func getRenderer(width int) *glamour.TermRenderer {
@@ -41,7 +37,7 @@ func getRenderer(width int) *glamour.TermRenderer {
 		return r
 	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle("tokyo-night"),
 		glamour.WithStylesFromJSONBytes(zeroMarginStyle),
 		glamour.WithWordWrap(width),
 	)

@@ -29,6 +29,7 @@ type ReasoningResult struct {
 	ActionInput string
 	ToolCallID  string
 	ToolCalls   []ToolCallItem
+	TextContent string // LLM text between tool calls (thinking process)
 	IsFinal     bool
 }
 
@@ -65,7 +66,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		return &ReasoningResult{
 			Thought: "调用工具: " + tc.Name, Action: ActionExecuteTool,
 			ActionInput: tc.Name + ":" + formatArgs(tc.Args),
-			ToolCallID:  tc.ID, ToolCalls: toolCalls, IsFinal: false,
+			ToolCallID: tc.ID, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
 		}
 	}
 
@@ -75,7 +76,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 	}
 	return &ReasoningResult{
 		Thought: "并行调用工具: " + strings.Join(names, ", "),
-		Action:  ActionExecuteTool, ToolCalls: toolCalls, IsFinal: false,
+		Action: ActionExecuteTool, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
 	}
 }
 
@@ -113,6 +114,9 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 
 	for token := range tokenCh {
 		if token.Content != "" {
+				if textBuf.Len() == 0 && a.phaseFn != nil {
+					a.phaseFn("Reasoning")
+				}
 			textBuf.WriteString(token.Content)
 			if a.streamFn != nil {
 				a.streamFn(token.Content, false)

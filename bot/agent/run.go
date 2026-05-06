@@ -94,6 +94,11 @@ func (a *Agent) collectCalls(reasoning *ReasoningResult) []ToolCallItem {
 }
 
 func (a *Agent) executeAndFeedback(calls []ToolCallItem, reasoning *ReasoningResult, state *stepState, callback RunCallback) *stepState {
+	// Surface LLM thinking text between tool calls.
+	if reasoning.TextContent != "" && callback != nil {
+		callback(a.currentStep, reasoning.Thought, "think", "", "", reasoning.TextContent, 0, 0)
+	}
+
 	results := a.executor.ExecuteBatch(a.ctx, calls)
 
 	msgs := make([]llm.Message, 0, len(results))

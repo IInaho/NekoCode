@@ -34,16 +34,16 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 
 ### 视觉主题：深夜书房
 
-一只黑猫蜷在屏幕旁的意象贯穿始终。猫不是画出来的，是通过颜色暗示的——teal 色偶尔闪现，像暗处的猫眼。
+黑猫蜷在屏幕旁的意象——teal 色偶尔闪现，像暗处的猫眼。
 
 **色彩体系**：
 - 背景：终端原生黑色
 - 主文字：`#a0a0a0` 中性灰
-- 主色 teal：`#4ec9b0`，仅用于 spinner、角色标签等点缀
-- User 金：`#c9a96e` 暗金，不刺眼
-- Assistant 绿：`#4ec9b0` teal
+- 主色 teal：`#4ec9b0`，用于 Assistant 色条、spinner
+- User 金：`#c9a96e` 暗金
 - 弱化文字：`#666666`
 - 边框线：`#333333`
+- 工具卡：暖金 `#c9a96e`
 
 ### 启动页
 
@@ -63,161 +63,139 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
          Press Enter
 ```
 
-启动瞬间猫眼 `◉` 会闪烁 teal 光（暗→亮→暗→亮定格），像黑猫在暗处睁眼。用户按下 Enter 进入聊天界面后，猫消失——只留下 teal 色在 spinner 和角色标签中间歇出现，暗示"猫还在看着"。
+猫眼 `◉` 闪烁 teal 光，像黑猫在暗处睁眼。用户按下 Enter 进入聊天界面。
 
-### 聊天界面布局
+### 聊天界面布局（Plan B：厚左色条）
 
 ```
-(=^.^=) PRIMUS v0.1.0 · 1.2k/64k · openai/gpt-4
-──────────────────────────────────────────
+(=^.^=) PRIMUS v0.1.0 · 1.2k/128k · anthropic/claude
 
-│ You
-│ 帮我看看 main.go 的内容
+▐ You                                                        ┃
+▐ 帮我分析下项目架构                                           ┃
 
-│ Assistant
-│ > 调用工具: bash `bash(command=cat main.go)`
-│
-│ 主人～这是 main.go 的内容喵！(´▽`ʃ♡ƪ)
-│
-│ package main
-│ ...
-│ 看起来是个很厉害的 Go 程序呢～
-
-──────────────────────────────────────────
-┃ Type a message...
-──────────────────────────────────────────
+▐ Assistant                                                  ┃
+▐                                                            ┃
+  ┌ ◆ filesystem list .  [+] ──────────────────────────┐     ┃
+  │ ◆ filesystem read main.go [+]                       │     ┃
+  └──────────────────────────────────────────────────────┘     ┃
+▐                                                            ┃
+▐ ## 项目架构                                                 ┃
+▐                                                            ┃
+▐ 这是一个 Go 编写的终端 AI 助手...                             ┃
+▐                                                            ┃
+▐ Duration: 12.3s  ↑670 ↓128                                 ┃
 ```
 
-**顶部 Header**（1 行）：猫脸图标 + 应用名 + 版本 + token 用量 + provider/model，底部细线分隔。token 用量实时更新，颜色按消耗比例变化：灰色 (<60%)、黄色 (60-90%)、红色 (≥90%)。
+- **左侧**：`▐`（U+2590）厚色条 + `PaddingLeft(1)` 统一缩进
+- **右侧**：独立 Scrollbar 组件，`┃` thumb + `│` track
+- **工具卡片**：暖金色 `NormalBorder`，聚合所有工具在一个卡片，`[+]`/`[-]` 折叠
+- **思考文本**：`💭` 前缀 + Subtle 色，多行自动对齐
+- **Footer**：Subtle 色 Duration + Token 统计，不经 glamour
 
-**消息区域**（主体）：
-- 每条消息左侧一条竖线 + 角色标签
-- User 金色竖线，Assistant teal 竖线
-- 无顶线底线的完整边框，视觉轻盈
-- 消息间无额外空行，竖线本身提供分隔
-- Assistant 的思考/工具过程以更暗色（`#3a6a5a`）渲染在正文上方，可折叠感知
+### 处理阶段
 
-**底部 Input**（2 行）：一条分隔线 + 提示符 `┃` + 输入区域 + 一条底部边界线。
+```
+▐ ◉ Reasoning (3.2s) ↑670 ↓56               ← LLM 生成文本中
+
+▐   💭 好呀～让我来帮你分析一下项目架构喵！   ← 思考文本
+▐   ┌ ◆ filesystem list .  [+] ──────────┐  ← 工具卡片
+▐   └────────────────────────────────────┘
+▐   💭 好多文件～继续深入看看                ← 新一轮思考
+
+▐ ◉ Running bash (0.3s)                    ← 工具执行中
+
+▐ Assistant                                ← 完成
+▐   完整回答（glamour 渲染）                 ← 最终回复
+```
+
+阶段流转：Ready → Thinking → Reasoning → Running → Thinking → ... → Ready
+
+- **Thinking**: LLM 调用已发出，等待响应
+- **Reasoning**: 首个 token 到达，模型生成中
+- **Running**: 工具执行中
 
 ### 工具确认栏
 
-当助手准备执行写操作或危险操作时，消息区域底部出现确认栏：
-
 ```
-[safe] bash command=ls                                         [enter] confirm  [esc] cancel
-[write] filesystem path=test content=hello cat                 [enter] confirm  [esc] cancel
-[destructive] bash command=rm -rf /tmp/cache                   [enter] confirm  [esc] cancel
+Confirm
+  bash rm -rf /tmp/cache  [destructive]
+  Proceed?  [enter] yes  [esc] no
 ```
 
-- 安全等级标签着色：`[write]` 黄色，`[destructive]` 红色
-- 显示工具名 + 参数概要
-- Enter 确认执行，Esc 取消
-- 确认期间界面静止（spinner 暂停），等待用户决定
-- 禁止级操作（`[forbidden]`）不弹框，直接在聊天中告知被拒绝
-
-### 流式输出
-
-助手回复以结构化内容块实时展示：
-- spinner `◉` + 阶段状态（"Thinking (2.1s)" / "Running bash (3.5s)"）
-- 工具调用以独立卡片呈现，`◆` 暖金色图标，可折叠 `[+]`/`[-]`
-- 完成后卡片保留在消息中，`ctrl+e` 切换展开/折叠
+- `[write]` 黄色，`[destructive]` 红色
+- Enter 确认，Esc 取消
+- 禁止级操作不弹框，直接告知被拒绝
 
 ### 输入交互
 
-- **发送**：Enter 提交消息，输入框清空
-- **历史翻阅**：空输入框时按 ↑/↓ 翻阅发送历史
-- **命令提示**：输入 `/` 自动弹出可用命令列表，支持实时过滤。Tab / Shift+Tab 选择，Enter 填入（光标移到末尾可继续输入参数），再按 Enter 发送。精确匹配时不弹框
-
-**提示框外观**：
-```
-── suggestions ──
-> /help            ← teal 高亮选中项
-  /clear
-  /summarize
-  /stats
-  /config
-```
-- **退出**：Ctrl+C
+- **发送**：Enter 提交，输入框清空，消息即时显示
+- **历史翻阅**：↑/↓ 翻阅历史
+- **命令提示**：输入 `/` 弹出命令列表，Tab/Shift+Tab 选择
 
 ## Agent 能力
 
 ### 工具清单
 
-| 工具 | 功能 | 安全等级 |
-|------|------|----------|
-| **bash** | 执行 Shell 命令 | 三级关键词匹配：safe/write/destructive/forbidden |
-| **filesystem** | 文件读写列表 | `read`/`list` 自动放行，`write` 需确认 |
-| **glob** | 文件模式匹配 | 始终自动放行 |
-| **grep** | ripgrep 内容搜索 | 始终自动放行 |
-| **edit** | 精确字符串替换 | 需确认，失败返回文件内容 |
+| 工具 | 功能 | 安全等级 | 执行模式 |
+|------|------|----------|----------|
+| **bash** | Shell 命令 | 四级匹配 | Sequential |
+| **filesystem** | 文件读写列表 | read/list Safe, write 确认 | Parallel(read)/Seq(write) |
+| **glob** | 文件模式匹配 | Safe | Parallel |
+| **grep** | ripgrep 搜索 | Safe | Parallel |
+| **edit** | 精确字符串替换 | Write | Sequential |
+| **web_search** | Bing 搜索 | Safe | Parallel |
+| **web_fetch** | 网页抓取 | Safe | Parallel |
 
 ### 危险命令分级
 
-**自动放行**（只读）：
-`ls`, `cat`, `pwd`, `grep`, `find`, `head`, `tail`, `wc`, `file`, `stat` 等
+**自动放行**：`ls`, `cat`, `pwd`, `grep`, `find`, `head`, `tail`, `wc` 等
 
-**确认后执行**（写操作）：
-`mkdir`, `touch`, `cp`, `mv`, `tar`, `zip`, `git add`, `git commit`, `pip/npm/go install`, `make` 等
+**确认后执行（写）**：`mkdir`, `touch`, `cp`, `mv`, `git add/commit`, `npm install` 等
 
-**确认后执行**（危险）：
-`rm`, `chmod`, `chown`, `kill`, `pkill`, `shutdown`, `reboot`, `git push`, `git reset --hard` 等
+**确认后执行（危险）**：`rm`, `chmod`, `kill`, `reboot`, `git push --force` 等
 
-**直接拒绝**（禁止）：
-`sudo`, `eval`, `curl|bash`, `ssh`, `telnet`, `nc`, `dd`, `mkfs` 等
+**直接拒绝**：`sudo`, `eval`, `ssh`, `telnet`, `dd`, `mkfs` 等
 
-### 决策流程
+### 并行工具执行
 
-1. 用户输入到达 → 助手判断是 `/` 命令还是自然语言
-2. 自然语言进入推理：LLM 根据对话历史和可用工具决定是直接聊天还是调用工具
-3. 若调用工具：检查危险等级 → 必要时弹出确认栏 → 执行 → 将结果回传 LLM 生成最终回复
-4. 若直接聊天：LLM 直接生成回复
-5. 回复展示给用户，本轮结束
+互不依赖的工具（glob + grep + web_search）由 executor 并发执行，worker pool 上限 10。任一工具声明 `ModeSequential` 则整批串行。
 
-### 任务连续性
+### 思考过程展示
 
-助手能执行多步操作。例如"帮我看看有哪些 Go 文件，然后统计下代码行数"：
-1. 调用 glob 找到所有 `.go` 文件
-2. 调用 bash `wc -l *.go` 统计行数
-3. 生成总结回复
+工具调用间的 LLM 文本以 `💭` 思考块展示——不经过 glamour，纯 Subtle 色 prose 文本。只展示中间过程，最终回答用 glamour 渲染。
 
 ## 长对话管理
 
-助手会自动管理对话长度，确保不会超出模型 token 上限：
-
-- **滑动窗口**：始终保留最近 20 条消息原文，超出的旧消息进入待压缩区
-- **自动摘要**：当消息数量超过窗口且 token 超过预算一半时，触发摘要——将最早的消息传给 LLM，压缩为 ≤300 字的摘要
-- **摘要合并**：多次摘要会累积更新，保持信息连续性
-- **Token 保护**：即使未触发摘要，Build 时也会从最早消息开始丢弃，保证不超预算
-- **清空重来**：`/clear` 同时清空消息和摘要
-
-用户不会感知到这个过程——对话体验始终连贯。
+- **滑动窗口**：保留最近 20 条消息
+- **自动摘要**：消息 > 20 且 token > budget/2 触发，压缩为 ≤300 字
+- **Token 保护**：Build 时从最早消息丢弃，保护 tool_calls/tool_result 配对
+- **手动清空**：`/clear` 清空消息和摘要
 
 ## 角色设定
 
-助手以软萌二次元美少女风格回复（通过 system prompt 控制）。说话带可爱语气词（呀、呢、啦、喵），风格元气治愈，行为乖巧懂事。
+软萌二次元黑猫少女，语气可爱（呀、呢、啦、喵），风格元气治愈。
 
-工具调用阶段，系统在角色 prompt 末尾附加一条简短的"有操作需求时请调用函数"指令。Native Function Calling 将工具定义作为独立参数传入，与文本上下文分离，既保证操作准确性，又不影响对话风格。
+工具使用规则（system prompt 末尾）：
+- grep 优先、并行搜索、先读后搜、及时收手
+- 图表用代码块包裹
+- 优先用 markdown 标题+列表，需要空间关系才用 ASCII 图
 
-## 模块职责一览
+## 模块职责
 
-| 模块 | 位置 | 职责摘要 |
-|------|------|----------|
-| **Agent 循环** | `bot/agent/` | Reason → Execute → Feedback 三阶段循环，状态由 stepState 在迭代间传递 |
-| **LLM 网关** | `llm/` | 统一对接 OpenAI / Anthropic / GLM，原生 Function Calling，屏蔽 provider 差异 |
-| **工具系统** | `bot/tools/` | Tool 接口 + Registry + DangerLevel 四级安全分级 + ParseCall 调用协议 |
-| **上下文管理** | `ctxmgr/` | Hybrid Window + Summary：Build(withTools) 统一入口，自动摘要，token 截断 |
-| **确认机制** | `bot/types/types.go` | ConfirmRequest channel 通信，TUI 渲染确认栏，enter/esc 应答 |
-| **Bot 组装** | `bot/bot.go` | 依赖注入：ctxmgr + agent + tools + llm + command，SummarizeIfNeeded 触发 |
-| **命令系统** | `bot/command.go` | `/` 前缀解析，handler 注册模式，CommandCallbacks 依赖注入 |
-| **配置管理** | `bot/config.go` | `~/.primusbot/config.json` 加载 |
-| **TUI 界面** | `tui/` | Bubble Tea v2，通过 `BotInterface` 接口与 bot 解耦；components 子包渲染消息/输入/启动页；styles 子包管理色彩和 Markdown |
+| 模块 | 位置 | 职责 |
+|------|------|------|
+| **Agent 循环** | `bot/agent/` | Reason→Execute→Feedback，并行调度，stop 策略 |
+| **LLM 网关** | `llm/` | 统一对接多 provider，共享 HTTP 连接池，流式解析 |
+| **工具系统** | `bot/tools/` | Tool 接口 + ExecutionMode + DangerLevel + ANSI 清理 |
+| **上下文管理** | `ctxmgr/` | 4 文件拆分，Hybrid Window+Summary，语言感知 token 估算 |
+| **确认机制** | `bot/types/` | channel 通信，TUI 渲染确认栏 |
+| **Bot 组装** | `bot/bot.go` | 依赖注入，ShouldStop，ContextTransform |
+| **命令系统** | `bot/command.go` | `/` 前缀解析，handler 注册 |
+| **配置** | `bot/config.go` | `~/.primusbot/config.json` |
+| **TUI** | `tui/` | Bubble Tea v2，BotInterface 解耦，21 文件组件化，Plan B 视觉 |
 
 ## 非交互模式
-
-除了 TUI，也支持命令行直接调用：
 
 ```bash
 primusbot "帮我看看当前目录有什么文件"
 ```
-
-同样走 Agent 循环，输出结果直接打印到 stdout。
