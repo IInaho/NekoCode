@@ -70,10 +70,12 @@ func (m *Model) startAgent(value string) tea.Cmd {
 						diffs = append(diffs, output)
 					}
 					block := components.ContentBlock{
-						Type:      components.BlockToolCall,
-						ToolName:  toolName,
-						ToolArgs:  formatBriefArgs(toolName, toolArgs),
-						Collapsed: true,
+						Type:       components.BlockToolCall,
+						ToolName:   toolName,
+						ToolArgs:   formatBriefArgs(toolName, toolArgs),
+						Collapsed:  true,
+						BatchIdx:   batchIdx,
+						BatchTotal: batchTotal,
 					}
 					if output != "" {
 						block.Content = output

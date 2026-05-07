@@ -45,7 +45,7 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 		}
 
 		a.drainSteering()
-		if a.ctx.Err() != nil {
+		if a.getCtx().Err() != nil {
 			if callback != nil {
 				callback(a.currentStep, "done", "chat", "", "", "已中断", 0, 0)
 			}
@@ -53,6 +53,20 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 		}
 
 		reasoning := a.Reason(state)
+
+		if reasoning.Interrupted {
+			if a.finished {
+				writeAgentLog("Run: interrupted + finished → abort")
+				if callback != nil {
+					callback(a.currentStep, "done", "chat", "", "", "已中断", 0, 0)
+				}
+				return &RunResult{FinalOutput: "已中断", Steps: a.currentStep}
+			}
+			writeAgentLog("Run: interrupted → draining steering")
+			a.drainSteering()
+			writeAgentLog("Run: steering drained, continuing")
+			continue
+		}
 
 		calls := a.collectCalls(reasoning)
 		if len(calls) > 0 {
@@ -70,7 +84,10 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 		return &RunResult{FinalOutput: reasoning.ActionInput, Steps: a.currentStep}
 	}
 
-	// maxIterations reached — force synthesize.
+	// maxIterations reached — force synthesize, unless aborted.
+	if a.getCtx().Err() != nil {
+		return &RunResult{FinalOutput: "已中断", Steps: a.currentStep}
+	}
 	output := a.forceSynthesize()
 	a.ctxMgr.AddAssistantResponse(output, "")
 	if callback != nil {
@@ -99,7 +116,7 @@ func (a *Agent) executeAndFeedback(calls []ToolCallItem, reasoning *ReasoningRes
 		callback(a.currentStep, reasoning.Thought, "think", "", "", reasoning.TextContent, 0, 0)
 	}
 
-	results := a.executor.ExecuteBatch(a.ctx, calls)
+	results := a.executor.ExecuteBatch(a.getCtx(), calls)
 
 	msgs := make([]llm.Message, 0, len(results))
 	for i, r := range results {

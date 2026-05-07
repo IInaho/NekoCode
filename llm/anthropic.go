@@ -242,7 +242,7 @@ func anthropicToResponse(anth *anthropicResponse) *Response {
 
 func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error) {
 	tokenChan := make(chan StreamToken)
-	errChan := make(chan error)
+	errChan := make(chan error, 1)
 
 	go func() {
 		defer close(tokenChan)

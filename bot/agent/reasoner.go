@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -29,8 +31,9 @@ type ReasoningResult struct {
 	ActionInput string
 	ToolCallID  string
 	ToolCalls   []ToolCallItem
-	TextContent string // LLM text between tool calls (thinking process)
+	TextContent string
 	IsFinal     bool
+	Interrupted bool // context was canceled mid-stream (steer, not abort)
 }
 
 func (a *Agent) Reason(state *stepState) *ReasoningResult {
@@ -45,6 +48,12 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 
 	toolCalls, textContent, err := a.callLLMForTool()
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return &ReasoningResult{
+				Thought: "用户中断", Action: ActionChat,
+				Interrupted: true,
+			}
+		}
 		return &ReasoningResult{
 			Thought: "LLM调用失败", Action: ActionChat,
 			ActionInput: fmt.Sprintf("抱歉，调用失败: %v", err), IsFinal: true,
@@ -95,104 +104,122 @@ func (a ActionType) String() string {
 
 func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 	toolDefs := descriptorsToToolDefs(a.toolRegistry.Descriptors())
-	messages := a.ctxMgr.Build(true)
-	if a.transformContext != nil {
-		messages = a.transformContext(messages)
-	}
 
-	tokenCh, errCh := a.llmClient.ChatStream(a.ctx, messages, toolDefs)
+	var items []ToolCallItem
+	var textContent string
 
-	var textBuf strings.Builder
-	var reasoningBuf strings.Builder
-	tcAccum := make(map[int]*toolAccum)
+	err := withRetry(a.getCtx(), func() error {
+		messages := a.ctxMgr.Build(true)
+		if a.transformContext != nil {
+			messages = a.transformContext(messages)
+		}
 
-	ctxChars := 0
-	for _, m := range messages {
-		ctxChars += len(m.Content) + len(m.Role)
-	}
-	a.AddTokens(ctxChars/4, 0)
+		tokenCh, errCh := a.llmClient.ChatStream(a.getCtx(), messages, toolDefs)
+		if tokenCh == nil {
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				return fmt.Errorf("chat stream failed")
+			}
+		}
 
-	for token := range tokenCh {
-		if token.Content != "" {
+		var textBuf strings.Builder
+		var reasoningBuf strings.Builder
+		tcAccum := make(map[int]*toolAccum)
+
+		ctxChars := 0
+		for _, m := range messages {
+			ctxChars += len(m.Content) + len(m.Role)
+		}
+		a.AddTokens(ctxChars/4, 0)
+
+		for token := range tokenCh {
+			if token.Content != "" {
 				if textBuf.Len() == 0 && a.phaseFn != nil {
 					a.phaseFn("Reasoning")
 				}
-			textBuf.WriteString(token.Content)
-			if a.streamFn != nil {
-				a.streamFn(token.Content, false)
+				textBuf.WriteString(token.Content)
+				if a.streamFn != nil {
+					a.streamFn(token.Content, false)
+				}
+				a.AddTokens(0, 1)
 			}
-			a.AddTokens(0, 1)
+			if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
+				a.ResetTokens()
+				a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+			}
+			if token.ReasoningContent != "" {
+				reasoningBuf.WriteString(token.ReasoningContent)
+				writeAgentLog("ReasoningContent[%d]: %q", len(token.ReasoningContent), token.ReasoningContent)
+			}
+			if token.ToolCallDelta != nil {
+				idx := token.ToolCallDelta.Index
+				acc := tcAccum[idx]
+				if acc == nil {
+					acc = &toolAccum{}
+					tcAccum[idx] = acc
+				}
+				if token.ToolCallDelta.ID != "" {
+					acc.id = token.ToolCallDelta.ID
+				}
+				if token.ToolCallDelta.Name != "" {
+					acc.name = token.ToolCallDelta.Name
+				}
+				acc.args.WriteString(token.ToolCallDelta.Arguments)
+			}
 		}
-		if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
-			a.ResetTokens()
-			a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return err
+			}
+		default:
 		}
-		if token.ReasoningContent != "" {
-			reasoningBuf.WriteString(token.ReasoningContent)
-			writeAgentLog("ReasoningContent[%d]: %q", len(token.ReasoningContent), token.ReasoningContent)
+
+		textContent = tools.StripAnsi(textBuf.String())
+		if reasoningBuf.Len() > 0 {
+			a.lastReasoningContent = reasoningBuf.String()
 		}
-		if token.ToolCallDelta != nil {
-			idx := token.ToolCallDelta.Index
-			acc := tcAccum[idx]
+
+		if len(tcAccum) == 0 {
+			return nil
+		}
+
+		var toolCalls []llm.ToolCall
+		for i := 0; i < len(tcAccum); i++ {
+			acc := tcAccum[i]
 			if acc == nil {
-				acc = &toolAccum{}
-				tcAccum[idx] = acc
+				continue
 			}
-			if token.ToolCallDelta.ID != "" {
-				acc.id = token.ToolCallDelta.ID
+			toolCalls = append(toolCalls, llm.ToolCall{
+				ID:   acc.id,
+				Type: "function",
+				Function: llm.FunctionCall{
+					Name:      acc.name,
+					Arguments: acc.args.String(),
+				},
+			})
+		}
+
+		items = make([]ToolCallItem, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			var args map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				return fmt.Errorf("解析工具参数失败: %v", err)
 			}
-			if token.ToolCallDelta.Name != "" {
-				acc.name = token.ToolCallDelta.Name
-			}
-			acc.args.WriteString(token.ToolCallDelta.Arguments)
+			items = append(items, ToolCallItem{
+				ID: tc.ID, Name: tc.Function.Name, Args: args,
+			})
 		}
-	}
 
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return nil, "", err
-		}
-	default:
+		a.ctxMgr.AddAssistantToolCall(textContent, a.lastReasoningContent, toolCalls)
+		return nil
+	})
+	if err != nil {
+		return nil, "", err
 	}
-
-	textContent := tools.StripAnsi(textBuf.String())
-	if reasoningBuf.Len() > 0 {
-		a.lastReasoningContent = reasoningBuf.String()
-	}
-
-	if len(tcAccum) == 0 {
-		return nil, textContent, nil
-	}
-
-	var toolCalls []llm.ToolCall
-	for i := 0; i < len(tcAccum); i++ {
-		acc := tcAccum[i]
-		if acc == nil {
-			continue
-		}
-		toolCalls = append(toolCalls, llm.ToolCall{
-			ID:   acc.id,
-			Type: "function",
-			Function: llm.FunctionCall{
-				Name:      acc.name,
-				Arguments: acc.args.String(),
-			},
-		})
-	}
-
-	items := make([]ToolCallItem, 0, len(toolCalls))
-	for _, tc := range toolCalls {
-		var args map[string]interface{}
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-			return nil, "", fmt.Errorf("解析工具参数失败: %v", err)
-		}
-		items = append(items, ToolCallItem{
-			ID: tc.ID, Name: tc.Function.Name, Args: args,
-		})
-	}
-
-	a.ctxMgr.AddAssistantToolCall(textContent, a.lastReasoningContent, toolCalls)
 	return items, textContent, nil
 }
 
@@ -203,41 +230,60 @@ type toolAccum struct {
 }
 
 func (a *Agent) forceSynthesize() string {
-	messages := a.ctxMgr.Build(false)
-	messages = append(messages, llm.Message{
-		Role: "user", Content: a.synthesizePrompt,
-	})
-	tokenCh, errCh := a.llmClient.ChatStream(a.ctx, messages, nil)
-
-	var textBuf strings.Builder
-	ctxChars := 0
-	for _, m := range messages {
-		ctxChars += len(m.Content) + len(m.Role)
-	}
-	a.AddTokens(ctxChars/4, 0)
-
-	for token := range tokenCh {
-		if token.Content != "" {
-			textBuf.WriteString(token.Content)
-			if a.streamFn != nil {
-				a.streamFn(token.Content, false)
+	var text string
+	err := withRetry(a.getCtx(), func() error {
+		messages := a.ctxMgr.Build(false)
+		messages = append(messages, llm.Message{
+			Role: "user", Content: a.synthesizePrompt,
+		})
+		tokenCh, errCh := a.llmClient.ChatStream(a.getCtx(), messages, nil)
+		if tokenCh == nil {
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				return fmt.Errorf("chat stream failed")
 			}
-			a.AddTokens(0, 1)
 		}
-		if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
-			a.ResetTokens()
-			a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+
+		var textBuf strings.Builder
+		ctxChars := 0
+		for _, m := range messages {
+			ctxChars += len(m.Content) + len(m.Role)
 		}
+		a.AddTokens(ctxChars/4, 0)
+
+		for token := range tokenCh {
+			if token.Content != "" {
+				textBuf.WriteString(token.Content)
+				if a.streamFn != nil {
+					a.streamFn(token.Content, false)
+				}
+				a.AddTokens(0, 1)
+			}
+			if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
+				a.ResetTokens()
+				a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+			}
+		}
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return err
+			}
+		default:
+		}
+		text = tools.StripAnsi(textBuf.String())
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return "已中断"
+		}
+		return "抱歉，信息收集完成但总结失败"
 	}
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return "抱歉，信息收集完成但总结失败"
-		}
-	default:
-	}
-	if textBuf.Len() > 0 {
-		return tools.StripAnsi(textBuf.String())
+	if text != "" {
+		return text
 	}
 	return "抱歉，无法生成总结"
 }

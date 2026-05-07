@@ -20,9 +20,10 @@ primusbot/
 │   │   └── extensions.go       #     Extension 接口：Tools() + Commands()
 │   ├── agent/                  #   Agent 循环
 │   │   ├── agent.go            #     Agent 结构体、ShouldStop、ContextTransform、token 统计
-│   │   ├── run.go              #     主循环 (Reason→Execute→Feedback) + 状态机 + 并行调度
+│   │   ├── run.go              #     主循环 (Reason→Execute→Feedback) + BTW 中断处理
 │   │   ├── reasoner.go         #     LLM 调用、工具调用解析、流式 token 处理
-│   │   └── executor.go         #     批量工具调度（串行/并行）、DangerLevel 检查、确认回调
+│   │   ├── executor.go         #     批量工具调度（串行/并行）、DangerLevel 检查、确认回调
+│   │   └── retry.go            #     LLM 调用指数退避重试（0.5s→8s，最多4次）
 │   └── tools/                  #   工具系统
 │       ├── tool.go             #     Tool 接口、Registry、ExecutionMode、ParseCall、StripAnsi
 │       ├── tool_bash.go        #     BashTool — Shell 命令执行 + 四级危险分级 + ANSI 清理
@@ -31,13 +32,13 @@ primusbot/
 │       ├── tool_grep.go        #     GrepTool — ripgrep 内容搜索
 │       ├── tool_edit.go        #     EditTool — 精确字符串替换 + diff 输出
 │       ├── tool_webfetch.go    #     WebFetchTool — HTTP GET + HTML→Markdown + DNS 安全校验
-│       ├── tool_websearch.go   #     WebSearchTool — Bing HTML 解析 + 相关性排序
+│       ├── tool_websearch.go   #     WebSearchTool — Exa AI MCP 优先 + Bing HTML 降级
 │       └── html2md.go          #     HTML→Markdown 转换器 + collapseBlankLines
-├── ctxmgr/                     # 上下文管理（按职责拆分 4 文件）
-│   ├── manager.go              #   Manager struct + Build() 上下文组装 + 统计接口
-│   ├── storage.go              #   消息存取：Add/AddToolResult/AddToolResultsBatch/Clear
-│   ├── token.go                #   Token 估算：语言感知（CJK ~1.5/token, ASCII ~4/token）
-│   └── summarize.go            #   摘要生成：NeedsSummarization / Summarize / BuildPrompt
+│   └── ctxmgr/                 # 上下文管理（按职责拆分 4 文件）
+│       ├── manager.go          #   Manager struct + Build() 上下文组装 + 统计接口
+│       ├── storage.go          #   消息存取：Add/AddToolResult/AddToolResultsBatch/Clear
+│       ├── token.go            #   Token 估算：语言感知（CJK ~1.5/token, ASCII ~4/token）
+│       └── summarize.go        #   结构化摘要：NeedsSummarization / Summarize / BuildPrompt
 ├── llm/                        # LLM 抽象层
 │   ├── llm.go                  #   LLM 接口、Message/Response/ToolDef 等核心类型
 │   ├── openai_compat.go        #   OpenAI 兼容实现（OpenAI / GLM / DeepSeek）
@@ -83,7 +84,7 @@ main
   │             ├── bot/extensions ─── bot/tools
   │             ├── bot/agent ───┬── bot/tools
   │             │                ├── bot/types
-  │             │                ├── ctxmgr ─── llm
+  │             │                ├── bot/ctxmgr ─── llm
   │             │                └── llm
   │             └── ctxmgr
   └── tui ──────┬── bot (BotInterface)
@@ -111,6 +112,7 @@ main
 │  │         ├─ phaseFn("Thinking")           │ │
 │  │         ├─ ctxMgr.Build(true) 组装上下文  │ │
 │  │         ├─ llmClient.ChatStream() 流式   │ │
+│  │         ├─ withRetry() 指数退避重试       │ │
 │  │         ├─ 首 token → phaseFn("Reasoning")│ │
 │  │         ├─ 返回 tool_calls → 解析        │ │
 │  │         ├─ 保存 ReasoningContent         │ │
@@ -153,6 +155,45 @@ type stepState struct {
 - `shouldStop`: 自定义停止条件（SearchCount >= 4 && FetchCount == 0 → 强制综合）
 - `contextTransform`: 工具结果 > 6 条时注入 "现在综合回答" 指令
 - `maxIterations`: 15 轮后触发 `forceSynthesize()`
+
+### BTW 中断与 Steer 机制
+
+Agent 处理中用户可输入新消息打断当前 LLM 调用并注入到上下文：
+
+```
+┌─── TUI 层 ──┐     ┌─── Agent 层 ──┐
+│ Enter 按键   │     │                │
+│ m.Bot.Steer()│────→│ steeringCh ← msg
+│ Stream.Reset │     │ replaceCtx()   │  ← 原子取消旧 ctx + 创建新 ctx
+│ SetBlocks(nil)│    │                │
+│ status 更新   │     │ drainSteering()│  ← 拾取消息注入 ctxMgr
+└──────────────┘     │ continue       │  ← 新 Reason() 处理
+                     └────────────────┘
+```
+
+- **Enter** → `Steer()`：注入消息 + 中断当前 LLM 调用，UI 重置 processingStart + Stream
+- **Esc** → `Abort()`：设置 `finished=true` + 取消 ctx，退出循环返回 "已中断"
+- `callLLMForTool` 检测 `context.Canceled` → 返回 `Interrupted` 标记
+- Run 循环检查 `Interrupted`：`finished=true` → Abort；`finished=false` → drain + continue
+- UI 反馈：Stream 清空 + processingStart 重置 + status 显示 "Processing new input..."
+
+### 指数退避重试
+
+`retry.go`：LLM 调用失败时自动重试，指数退避 0.5s→1s→2s→4s→8s（最多 4 次）。
+
+```
+callLLMForTool() / forceSynthesize()
+  └─ withRetry(ctx, fn) ──┐
+     ├─ fn() 执行           │
+     ├─ 成功 → 返回         │
+     └─ 失败 → isRetryable?  │
+        ├─ 可重试 (5xx/429/network/timeout) → 退避后重试
+        └─ 不可重试 (4xx/cancel/deadline) → 立即返回错误
+```
+
+- `callLLMForTool` 的整个 ChatStream + token 处理包裹在 retry 闭包内
+- `forceSynthesize` 同样包裹
+- `context.Canceled` 和 `context.DeadlineExceeded` 不重试（用户取消了就是取消了）
 
 ## 共享类型与接口
 
@@ -251,7 +292,7 @@ LevelForbidden   (3) — 永远禁止
 | GlobTool | `tool_glob.go` | 文件模式匹配 |
 | GrepTool | `tool_grep.go` | ripgrep 内容搜索，支持 regex/glob/context |
 | EditTool | `tool_edit.go` | 精确字符串替换，失败返回带行号的文件内容 + diff |
-| WebSearchTool | `tool_websearch.go` | Bing HTML 解析，CJK bigram 相关性排序，结果去重 |
+| WebSearchTool | `tool_websearch.go` | Exa AI MCP 优先（free tier），Bing HTML 降级，numResults 可配 |
 | WebFetchTool | `tool_webfetch.go` | HTTP GET + HTML→Markdown，DNS 内网校验，prompt 指导提取 |
 
 ## 确认机制
@@ -360,14 +401,28 @@ tea.Batch(
 
 ## 上下文管理
 
-`ctxmgr/` 拆分为 4 文件：
+`bot/ctxmgr/` 拆分为 4 文件：
 
 - `manager.go`: Manager struct + Build() 组装 + 统计
 - `storage.go`: Add/AddToolResult/Clear
 - `token.go`: 语言感知 token 估算（CJK ~1.5/token, ASCII ~4/token, ceiling 除法防零）
-- `summarize.go`: Summarize/BuildPrompt
+- `summarize.go`: Summarize/BuildPrompt — **结构化摘要**
 
-核心策略：**Hybrid Window + Summary**。窗口大小 20，token 预算默认 64000。超出时 `Summarize()` 将前半压缩为摘要。
+核心策略：**Hybrid Window + Structured Summary**。窗口大小 20，token 预算默认 64000。超出时 `Summarize()` 将前半压缩为六段结构化摘要：
+
+```
+[目标] 用户正在完成的目标
+[进展] 已完成 / 进行中 / 阻塞
+[关键决策] 技术选型、架构决策
+[下一步] 待执行的操作
+[关键上下文] 用户偏好、约束条件
+[相关文件] 关键文件路径及作用
+```
+
+- 增量更新：已有摘要时在原基础上增删改，而非重新生成
+- 锚定策略：连续多次压缩保持信息连续性
+- Tool 消息保留 800 字符截断（信息密度更高），其他 500
+- BuildPrompt 英文模板，compaction agent 无工具纯文本
 
 ## Markdown 渲染
 

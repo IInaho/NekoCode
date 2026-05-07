@@ -12,7 +12,7 @@ import (
 	"primusbot/bot/extensions"
 	"primusbot/bot/tools"
 	"primusbot/bot/types"
-	"primusbot/ctxmgr"
+	"primusbot/bot/ctxmgr"
 	"primusbot/llm"
 )
 

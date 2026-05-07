@@ -120,7 +120,7 @@ func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, t
 	}
 
 	tokenChan := make(chan StreamToken)
-	errChan := make(chan error)
+	errChan := make(chan error, 1)
 
 	go func() {
 		defer close(tokenChan)

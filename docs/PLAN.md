@@ -37,7 +37,7 @@
 - ❌ 触发条件 / 动态激活
 
 ### 8. Web Search / Fetch ✅
-- `web_search`：Bing HTML 解析 + CJK bigram 排序
+- `web_search`：Exa AI MCP 优先（free tier）→ Bing HTML 降级，numResults 可配
 - `web_fetch`：HTML→Markdown + DNS 安全校验
 - ANSI escape 序列清理
 
@@ -53,6 +53,7 @@
 - ctxmgr 拆分为 4 文件：manager / storage / token / summarize
 - 语言感知 token 估算（CJK ~1.5/token, ASCII ~4/token）
 - Build() 保护 tool_calls/tool_result 配对
+- 结构化摘要：目标/进展/关键决策/下一步/关键上下文/相关文件，增量更新
 
 ### 11. 共享 HTTP 客户端 ✅
 - `SharedHTTPClient` + `SharedHTTPClientTimeout`
@@ -73,6 +74,18 @@
 
 ### 16. Scrollbar 独立组件 ✅
 - 独立 `Scrollbar` 组件，与 Messages 并列渲染
+
+### 16a. BTW 中断机制 ✅
+- Processing 中直接打字 + Enter 注入新消息并打断当前 LLM 调用
+- Esc 纯 Abort，返回"已中断"
+- 原子 ctx 替换（ctxMu 保护并发），UI 实时反馈
+
+### 16b. 指数退避重试 ✅
+- `bot/agent/retry.go`：LLM 调用失败自动重试
+- 0.5s→1s→2s→4s→8s（最多 4 次），区分可重试/不可重试错误
+
+### 16c. 模块重组 ✅
+- ctxmgr 移入 `bot/ctxmgr/`（仅 bot 使用，依赖方向更清晰）
 
 ### 17. 子 Agent 并行
 - 复杂任务拆分为独立子任务，并行执行，结果汇总

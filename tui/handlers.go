@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"primusbot/tui/components"
@@ -11,6 +12,13 @@ import (
 )
 
 const contentMarginV = 2
+
+func tuiLog(format string, args ...interface{}) {
+	f, err := os.OpenFile("/tmp/primusbot-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil { return }
+	defer f.Close()
+	fmt.Fprintf(f, "TUI: "+format+"\n", args...)
+}
 
 // --- spinner tick ---
 
@@ -28,6 +36,7 @@ func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
 	if m.state == StateProcessing {
 		elapsed := time.Since(m.processingStart)
 		m.Messages.SetProcessingStatus(fmt.Sprintf("%s (%.1fs)", m.processingPhase, elapsed.Seconds()))
+		tuiLog("spinner: phase=%q elapsed=%.1fs", m.processingPhase, elapsed.Seconds())
 		prompt, compl := m.Bot.TokenUsage()
 		if prompt == 0 {
 			prompt = m.Bot.ContextTokens()
@@ -142,12 +151,21 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		switch msg.String() {
 		case "enter":
 			value := m.Input.Value()
+			tuiLog("BTW Enter: value=%q len=%d phase=%q", value, len(value), m.processingPhase)
 			if value != "" {
 				m.Suggestions.Hide()
 				m.Input.AddHistory(value)
 				m.Input.Reset()
 				m.Messages.AddMessage(components.ChatMessage{Role: "user", Content: value})
+				m.Stream.Reset()
+				m.Messages.SetBlocks(nil)
+				m.processingStart = time.Now()
+				m.processingPhase = "Processing new input..."
+				m.Messages.SetProcessingStatus("Processing new input...")
 				m.Bot.Steer(value)
+				tuiLog("BTW Enter: done, Stream reset, phase=%q", m.processingPhase)
+			} else {
+				tuiLog("BTW Enter: value empty, skipped")
 			}
 		case "esc":
 			m.Bot.Abort()
@@ -155,6 +173,11 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		case "pgup", "pgdown", "up", "down":
 			m.Messages.Update(msg)
 			m.Input.SetFollow(false)
+		default:
+			// allow typing while processing for BTW steering
+			input, cmd := m.Input.Update(msg)
+			m.Input = input
+			return cmd
 		}
 		return nil
 	}

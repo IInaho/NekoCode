@@ -143,7 +143,7 @@ Confirm
 | **glob** | 文件模式匹配 | Safe | Parallel |
 | **grep** | ripgrep 搜索 | Safe | Parallel |
 | **edit** | 精确字符串替换 | Write | Sequential |
-| **web_search** | Bing 搜索 | Safe | Parallel |
+| **web_search** | Exa AI 搜索 (Bing 降级) | Safe | Parallel |
 | **web_fetch** | 网页抓取 | Safe | Parallel |
 
 ### 危险命令分级
@@ -167,9 +167,10 @@ Confirm
 ## 长对话管理
 
 - **滑动窗口**：保留最近 20 条消息
-- **自动摘要**：消息 > 20 且 token > budget/2 触发，压缩为 ≤300 字
+- **结构化自动摘要**：消息 > 20 且 token > budget/2 触发，压缩为六段结构化格式（目标/进展/关键决策/下一步/关键上下文/相关文件），支持增量更新
 - **Token 保护**：Build 时从最早消息丢弃，保护 tool_calls/tool_result 配对
 - **手动清空**：`/clear` 清空消息和摘要
+- **BTW 中断**：Processing 中可直接打字 + Enter 打断当前 LLM 调用并注入新消息，Esc 纯 abort
 
 ## 角色设定
 
@@ -184,10 +185,10 @@ Confirm
 
 | 模块 | 位置 | 职责 |
 |------|------|------|
-| **Agent 循环** | `bot/agent/` | Reason→Execute→Feedback，并行调度，stop 策略 |
+| **Agent 循环** | `bot/agent/` | Reason→Execute→Feedback，并行调度，BTW 中断，指数退避重试 |
 | **LLM 网关** | `llm/` | 统一对接多 provider，共享 HTTP 连接池，流式解析 |
 | **工具系统** | `bot/tools/` | Tool 接口 + ExecutionMode + DangerLevel + ANSI 清理 |
-| **上下文管理** | `ctxmgr/` | 4 文件拆分，Hybrid Window+Summary，语言感知 token 估算 |
+| **上下文管理** | `bot/ctxmgr/` | 4 文件拆分，Hybrid Window+Structured Summary，语言感知 token 估算 |
 | **确认机制** | `bot/types/` | channel 通信，TUI 渲染确认栏 |
 | **Bot 组装** | `bot/bot.go` | 依赖注入，ShouldStop，ContextTransform |
 | **命令系统** | `bot/command.go` | `/` 前缀解析，handler 注册 |

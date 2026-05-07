@@ -9,7 +9,7 @@ import (
 
 	"primusbot/bot/tools"
 	"primusbot/bot/types"
-	"primusbot/ctxmgr"
+	"primusbot/bot/ctxmgr"
 	"primusbot/llm"
 )
 
@@ -38,6 +38,7 @@ type TokenStats struct {
 }
 
 type Agent struct {
+	ctxMu                sync.Mutex
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	ctxMgr               *ctxmgr.Manager
@@ -86,18 +87,38 @@ func (a *Agent) SetContextTransform(fn ContextTransform) { a.transformContext = 
 func (a *Agent) SetSynthesizePrompt(prompt string)  { a.synthesizePrompt = prompt }
 func (a *Agent) SetStreamFn(fn StreamCallback)       { a.streamFn = fn }
 
-// Steer injects a user message mid-loop, like Pi's steering messages.
+// getCtx atomically reads the current context (safe for concurrent Steer/Abort).
+func (a *Agent) getCtx() context.Context {
+	a.ctxMu.Lock()
+	defer a.ctxMu.Unlock()
+	return a.ctx
+}
+
+// replaceCtx atomically cancels the current context and replaces it with a fresh one.
+func (a *Agent) replaceCtx() {
+	a.ctxMu.Lock()
+	defer a.ctxMu.Unlock()
+	a.cancel()
+	a.ctx, a.cancel = context.WithCancel(context.Background())
+}
+
+// Steer injects a user message mid-loop and interrupts the ongoing LLM call.
 func (a *Agent) Steer(msg string) {
+	writeAgentLog("Steer: msg=%q", msg)
 	select {
 	case a.steeringCh <- msg:
 	default:
 	}
+	a.replaceCtx()
+	writeAgentLog("Steer: context replaced")
 }
 
 // Abort cancels the agent's context, causing LLM calls and tool execution to stop.
 func (a *Agent) Abort() {
 	a.finished = true
+	a.ctxMu.Lock()
 	a.cancel()
+	a.ctxMu.Unlock()
 }
 
 func (a *Agent) AddTokens(prompt, completion int) {
@@ -140,9 +161,11 @@ func (a *Agent) Duration() time.Duration {
 }
 
 func (a *Agent) Reset() {
+	a.ctxMu.Lock()
 	if a.ctx.Err() != nil {
 		a.ctx, a.cancel = context.WithCancel(context.Background())
 	}
+	a.ctxMu.Unlock()
 	a.currentStep = 0
 	a.finished = false
 	a.lastReasoningContent = ""
