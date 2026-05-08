@@ -77,6 +77,7 @@ type StreamToken struct {
 	ReasoningContent string
 	ToolCallDelta    *ToolCallDelta // non-nil when streaming a tool call fragment
 	Usage            *StreamUsage   // final chunk carries usage
+	FinishReason     string         // "stop", "length", "tool_calls", etc.
 }
 
 type ToolCallDelta struct {
@@ -119,5 +120,8 @@ type LLM interface {
 	ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error)
 	SetAPIKey(apiKey string)
 	SetBaseURL(url string)
+	SetMaxTokens(n int)
+	MaxTokens() int
+	SetDisableThinking(disable bool)
 }
 

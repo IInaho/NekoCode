@@ -1,9 +1,10 @@
+// confirm_bar.go — 确认弹窗栏（yes/no 操作确认）。
 package components
-
 import (
 	"fmt"
 	"strings"
 
+	"primusbot/bot/tools"
 	"primusbot/bot/types"
 	"primusbot/tui/styles"
 
@@ -21,14 +22,7 @@ func NewConfirmBar(sty *styles.Styles) *ConfirmBar {
 
 func (c *ConfirmBar) SetRequest(req *types.ConfirmRequest) { c.req = req }
 func (c *ConfirmBar) Clear()                                { c.req = nil }
-func (c *ConfirmBar) Active() bool                          { return c.req != nil }
-
-func (c *ConfirmBar) Respond(accepted bool) {
-	if c.req != nil {
-		c.req.Response <- accepted
-		c.req = nil
-	}
-}
+func (c *ConfirmBar) Respond(ok bool)                         { c.req.Response <- ok; c.req = nil }
 
 func (c *ConfirmBar) Height() int {
 	if c.req == nil {
@@ -53,7 +47,7 @@ func (c *ConfirmBar) View(width int) string {
 	}
 
 	level := c.sty.Yellow.Render(c.req.Level.String())
-	if c.req.Level == 2 {
+	if c.req.Level == tools.LevelForbidden {
 		level = c.sty.Red.Render(c.req.Level.String())
 	}
 

@@ -16,7 +16,7 @@ func (t *EditTool) Name() string { return "edit" }
 	func (t *EditTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
 
 func (t *EditTool) Description() string {
-	return "精确编辑文件：查找并替换文件中首次出现的字符串。old_string 必须与文件内容精确匹配（含缩进和换行）。失败时返回文件内容帮助定位差异。"
+	return "精确字符串替换。ALWAYS prefer Edit over Write for modifications。MUST Read file first。old_string 必须逐字符匹配（含缩进/换行）且唯一。用 replace_all=true 替换全文件。"
 }
 
 func (t *EditTool) Parameters() []Parameter {
@@ -36,29 +36,35 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	if !ok || path == "" {
 		return "", fmt.Errorf("missing path parameter")
 	}
+
+	safePath, err := validatePath(path)
+	if err != nil {
+		return "", err
+	}
+
 	oldStr, ok := args["old_string"].(string)
 	if !ok || oldStr == "" {
 		return "", fmt.Errorf("missing old_string parameter")
 	}
 	newStr, _ := args["new_string"].(string)
 
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(safePath)
 	if err != nil {
 		return "", fmt.Errorf("读取文件失败: %v", err)
 	}
 
 	idx := strings.Index(string(content), oldStr)
 	if idx == -1 {
-		return "", fmt.Errorf("未找到匹配的字符串。文件内容 (%s):\n%s\n提示：请用 filesystem read 重新读取文件，确认精确内容后再试。", filepath.Base(path), withLineNumbers(string(content)))
+		return "", fmt.Errorf("未找到匹配的字符串。文件内容 (%s):\n%s\n提示：请用 read 重新读取文件，确认精确内容后再试。", filepath.Base(safePath), withLineNumbers(StripAnsi(string(content))))
 	}
 
 	replaced := string(content)[:idx] + newStr + string(content)[idx+len(oldStr):]
 
-	dir := filepath.Dir(path)
+	dir := filepath.Dir(safePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("创建目录失败: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
+	if err := os.WriteFile(safePath, []byte(replaced), 0644); err != nil {
 		return "", fmt.Errorf("写入文件失败: %v", err)
 	}
 
@@ -71,14 +77,20 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	}
 	diff := strings.Join(diffLines, "\n")
 
-	return fmt.Sprintf("已替换 %s:\n%s", filepath.Base(path), diff), nil
+	return fmt.Sprintf("已替换 %s:\n%s", filepath.Base(safePath), diff), nil
 }
 
 func withLineNumbers(content string) string {
+	content = StripAnsi(content)
 	lines := strings.Split(content, "\n")
 	var b strings.Builder
+	maxShow := 40
 	for i, line := range lines {
 		fmt.Fprintf(&b, "%4d  %s\n", i+1, line)
+		if i >= maxShow {
+			fmt.Fprintf(&b, "... [共 %d 行，仅显示前 %d 行]", len(lines), maxShow+1)
+			break
+		}
 	}
 	return b.String()
 }

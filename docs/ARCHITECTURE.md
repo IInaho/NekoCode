@@ -8,72 +8,92 @@ PrimusBot 是一个基于 Go 的终端 AI 助手，使用 Bubble Tea v2 构建 T
 
 ```
 primusbot/
-├── main.go                     # 入口：无参→TUI 交互模式，有参→单次 CLI 模式
-├── bot/                        # 核心组装层
-│   ├── bot.go                  #   Bot 结构体、依赖注入、公开 API
-│   ├── command.go              #   斜杠命令系统（/help /clear /stats /summarize /config）
-│   ├── config.go               #   配置管理 (~/.primusbot/config.json)
-│   ├── project_context.go      #   工作目录树构建（并发行数统计）
-│   ├── prompt/system.md        #   [embed] 角色 system prompt + 工具使用规则
-│   ├── types/types.go          #   共享类型：ConfirmRequest / ConfirmFunc / PhaseFunc
-│   ├── extensions/             #   插件注册
-│   │   └── extensions.go       #     Extension 接口：Tools() + Commands()
-│   ├── agent/                  #   Agent 循环
-│   │   ├── agent.go            #     Agent 结构体、ShouldStop、ContextTransform、token 统计
-│   │   ├── run.go              #     主循环 (Reason→Execute→Feedback) + BTW 中断处理
-│   │   ├── reasoner.go         #     LLM 调用、工具调用解析、流式 token 处理
-│   │   ├── executor.go         #     批量工具调度（串行/并行）、DangerLevel 检查、确认回调
-│   │   └── retry.go            #     LLM 调用指数退避重试（0.5s→8s，最多4次）
-│   └── tools/                  #   工具系统
-│       ├── tool.go             #     Tool 接口、Registry、ExecutionMode、ParseCall、StripAnsi
-│       ├── tool_bash.go        #     BashTool — Shell 命令执行 + 四级危险分级 + ANSI 清理
-│       ├── tool_filesystem.go  #     FileSystemTool — 文件读写列表 + 读缓存去重
-│       ├── tool_glob.go        #     GlobTool — 文件模式匹配
-│       ├── tool_grep.go        #     GrepTool — ripgrep 内容搜索
-│       ├── tool_edit.go        #     EditTool — 精确字符串替换 + diff 输出
-│       ├── tool_webfetch.go    #     WebFetchTool — HTTP GET + HTML→Markdown + DNS 安全校验
-│       ├── tool_websearch.go   #     WebSearchTool — Exa AI MCP 优先 + Bing HTML 降级
-│       └── html2md.go          #     HTML→Markdown 转换器 + collapseBlankLines
-│   └── ctxmgr/                 # 上下文管理（按职责拆分 4 文件）
-│       ├── manager.go          #   Manager struct + Build() 上下文组装 + 统计接口
-│       ├── storage.go          #   消息存取：Add/AddToolResult/AddToolResultsBatch/Clear
-│       ├── token.go            #   Token 估算：语言感知（CJK ~1.5/token, ASCII ~4/token）
-│       └── summarize.go        #   结构化摘要：NeedsSummarization / Summarize / BuildPrompt
-├── llm/                        # LLM 抽象层
-│   ├── llm.go                  #   LLM 接口、Message/Response/ToolDef 等核心类型
-│   ├── openai_compat.go        #   OpenAI 兼容实现（OpenAI / GLM / DeepSeek）
-│   ├── anthropic.go            #   Anthropic 实现（含 tool_use/tool_result 双向转换 + SSE 流式）
-│   └── event_reader.go         #   SSE 流解析器
-├── tui/                        # 终端 UI（Bubble Tea v2）
-│   ├── tui.go                  #   Run() 入口：Warmup + 创建 Program
-│   ├── model.go                #   Model 定义、BotInterface、状态机、Confirm/Phase 回调
-│   ├── update.go               #   Update 消息分发
-│   ├── handlers.go             #   spinner/done/confirm/keyPress 四大 handler
-│   ├── agent_runner.go         #   startChat/startAgent：命令分发 + Agent goroutine
-│   ├── helpers.go              #   formatBriefArgs + suggestions 辅助方法
-│   ├── phase.go                #   处理阶段常量：Ready/Thinking/Reasoning/Running + setPhase
-│   ├── view.go                 #   View 组装：JoinVertical 堆叠全部 section
-│   ├── block_stream.go         #   BlockStream：线程安全 ContentBlock 缓冲区 + 逐字释放
-│   └── components/             #   UI 组件
-│       ├── header.go           #     Header：猫脸 + 应用名 + token 用量 + provider
-│       ├── input.go            #     Input：textarea + 发送历史 + 发送过渡态
-│       ├── messages.go         #     Messages：滚动视口 + auto-follow + 处理状态
-│       ├── message.go          #     ChatMessage → 按 Role 分发 MessageItem
-│       ├── message_items.go    #     User/Assistant/System/Error 消息项 + thickLeftBar + stripLeadingSpaces
-│       ├── processing.go       #     ProcessingItem：spinner + 状态 + 流式块 + token 计数
-│       ├── splash.go           #     Splash：ASCII 猫 + 猫眼闪烁
-│       ├── list_widget.go      #     List：通用虚拟滚动列表 + 鼠标滚轮 + Height 估算
-│       ├── content_block.go    #     ContentBlock：工具卡片 + 💭 思考块 + 文本块
-│       ├── scrollbar.go        #     Scrollbar：独立滚动指示器组件
-│       ├── suggestions.go      #     Suggestions：斜杠命令自动补全
-│       └── confirm_bar.go      #     ConfirmBar：工具确认卡片
-│   └── styles/                 #   样式
-│       ├── colors.go           #     色彩体系 + Styles 结构体
-│       ├── charset.go          #     制表符字符集（含 ASCII 回退）
-│       └── markdown.go         #     glamour 封装（tokyo-night 主题 + 全宽度预热 + zero margin）
-├── docs/                       # 文档
-├── go.mod / go.sum
-└── README.md
+├── main.go                         # 入口：无参→TUI 交互模式，有参→单次 CLI 模式
+├── llm/                            # LLM 抽象层
+│   ├── llm.go                      #   LLM 接口、Message/Response/ToolDef 等核心类型
+│   ├── openai_compat.go            #   OpenAI 兼容实现（OpenAI / GLM / DeepSeek）
+│   ├── anthropic.go                #   Anthropic 实现（tool_use/tool_result 双向转换 + SSE 流式）
+│   └── event_reader.go             #   SSE 流解析器
+├── bot/                            # 核心逻辑
+│   ├── bot.go                      #   Bot 结构体、依赖注入、公开 API
+│   ├── config.go                   #   配置加载 + 斜杠命令系统
+│   ├── prompt/system.md            #   [embed] 角色 system prompt + 工具使用规则
+│   ├── types/types.go              #   共享类型：ConfirmRequest / ConfirmFunc / PhaseFunc / Phase 常量
+│   ├── extensions/                 #   插件接口
+│   │   └── extensions.go           #     Extension 接口：Tools() + Commands()
+│   ├── ctxmgr/                     #   上下文管理
+│   │   ├── manager.go              #     Manager struct + Build() 上下文组装 + 统计
+│   │   ├── storage.go              #     消息存取：Add/AddToolResult/AddToolResultsBatch/Clear
+│   │   ├── token.go                #     Token 估算：语言感知（CJK ~1.5/token, ASCII ~4/token）
+│   │   └── summarize.go            #     结构化摘要：NeedsSummarization / Summarize / BuildPrompt
+│   ├── tools/                      #   工具系统（每工具一文件）
+│   │   ├── tool.go                 #     Tool 接口、Registry、ExecutionMode、ParseCall、StripAnsi
+│   │   ├── tool_bash.go            #     BashTool — Shell 命令执行 + 四级危险分级
+│   │   ├── tool_read.go            #     ReadTool — 文件读取
+│   │   ├── tool_write.go           #     WriteTool — 文件写入
+│   │   ├── tool_edit.go            #     EditTool — 精确字符串替换 + diff 输出
+│   │   ├── tool_list.go            #     ListTool — 目录列表
+│   │   ├── tool_glob.go            #     GlobTool — 文件模式匹配（含 ** 递归）
+│   │   ├── tool_grep.go            #     GrepTool — ripgrep 内容搜索
+│   │   ├── tool_task.go            #     TaskTool — 子 agent 委派
+│   │   ├── tool_todo.go            #     TodoWriteTool — 任务列表更新
+│   │   ├── tool_webfetch.go        #     WebFetchTool — HTTP GET + HTML→Markdown
+│   │   ├── tool_websearch.go       #     WebSearchTool — Exa MCP 优先 + Bing HTML 降级
+│   │   └── html2md.go              #     HTML→Markdown 转换器
+│   └── agent/                      #   Agent 循环
+│       ├── agent.go                #     Agent 结构体、token 统计、Steer/Abort、replaceCtx
+│       ├── run.go                  #     主循环 (Reason→Execute→Feedback) + BTW 中断
+│       ├── reasoner.go             #     LLM 调用、流式 token 处理、工具调用解析
+│       ├── executor.go             #     批量工具调度（串行/并行）、DangerLevel 检查、确认回调
+│       ├── retry.go                #     LLM 调用指数退避重试（0.5s→8s，最多4次）
+│       └── subagent/               #   子 agent 引擎
+│           ├── engine.go           #     独立子 agent 循环（不依赖主 agent 包）
+│           ├── registry.go         #     AgentType 定义 + 注册机制
+│           └── agents.go           #     内置子 agent 定义（executor/verify/explore/plan/decompose）
+└── tui/                            # 终端 UI（Bubble Tea v2）
+    ├── tui.go                      #   Run() 入口
+    ├── types.go                    #   BotInterface、ChatState、消息类型
+    ├── model.go                    #   Model 结构体 + 初始化 + 状态切换
+    ├── update.go                   #   tea.Update 消息分发
+    ├── view.go                     #   tea.View 视图组装
+    ├── phase.go                    #   处理阶段常量 + setPhase
+    ├── agent.go                    #   startChat/startAgent/runAgent/onAgentStep
+    ├── helpers.go                   #   工具参数格式化（formatBriefArgs）
+    ├── handlers_spin.go            #   spinner tick + 流式消息回调
+    ├── handlers_done.go            #   agent 完成后处理 + token 更新
+    ├── handlers_keys.go            #   按键处理 + 确认键 + 调试日志 + suggestion 辅助
+    ├── components/                 #   UI 组件
+    │   ├── block/                  #   package block — 内容块类型与渲染
+    │   │   ├── block.go            #     BlockType 枚举、ContentBlock 结构体
+    │   │   ├── block_tool.go       #     工具调用行渲染（◆ edit foo.go [+]）
+    │   │   ├── block_diff.go       #     diff 高亮渲染（-/+ 行着色）
+    │   │   ├── block_text.go       #     文本块渲染（Thought / Reason）
+    │   │   ├── block_filter.go     #     FilterFinalBlocks
+    │   │   └── block_render.go     #     RenderBlock 分发器 + RenderBlocks 卡片包裹
+    │   ├── message/                #   package message — 消息类型与渲染
+    │   │   ├── message.go          #     ChatMessage 类型
+    │   │   ├── message_shared.go   #     共享 helper（cachedRender, thickLeftBar）
+    │   │   ├── message_user.go     #     UserMessageItem
+    │   │   ├── message_assistant.go #    AssistantMessageItem
+    │   │   ├── message_system.go   #     SystemMessageItem
+    │   │   └── message_error.go    #     ErrorMessageItem
+    │   ├── processing/             #   package processing — 流式渲染
+    │   │   ├── processing.go       #     ProcessingItem 结构体 + mutator + Height
+    │   │   ├── processing_render.go #    Render 编排器 + 5 个 section 方法
+    │   │   └── text.go             #     RenderFixed / WrapPlain / IsNoiseLine
+    │   ├── messages.go             #   Messages 容器 + AddMessage 分发
+    │   ├── list_widget.go          #   List：通用滚动列表 + Item 接口
+    │   ├── input.go                #   Input：textarea + 发送历史
+    │   ├── header.go               #   Header：猫脸 + 应用名 + token 用量 + provider
+    │   ├── splash.go               #   Splash：ASCII 猫 + 猫眼闪烁
+    │   ├── confirm_bar.go          #   ConfirmBar：工具确认卡片
+    │   ├── suggestions.go          #   Suggestions：斜杠命令自动补全
+    │   ├── scrollbar.go            #   Scrollbar：独立滚动指示器
+    │   └── todo_list.go            #   TodoList：任务列表
+    └── styles/                     #   样式
+        ├── colors.go               #     色彩体系 + Styles 结构体 + FmtTokens
+        ├── charset.go              #     制表符字符集（含 ASCII 回退）
+        └── markdown.go             #     glamour 封装（tokyo-night 主题）
 ```
 
 ## 包依赖图
@@ -85,13 +105,22 @@ main
   │             ├── bot/agent ───┬── bot/tools
   │             │                ├── bot/types
   │             │                ├── bot/ctxmgr ─── llm
-  │             │                └── llm
+  │             │                ├── llm
+  │             │                └── bot/agent/subagent ─── bot/tools + bot/ctxmgr + llm
   │             └── ctxmgr
   └── tui ──────┬── bot (BotInterface)
-                └── components ──┬── bot/types (confirm_bar.go)
-                                 │── bot/tools (content_block.go)
-                                 └── styles (stdlib + lipgloss + glamour)
+                ├── components/block ─── styles
+                ├── components/message ─── block + styles
+                ├── components/processing ─── block + styles
+                ├── components/ ──┬── block + message + processing
+                │                └── styles
+                └── styles (stdlib + lipgloss + glamour)
 ```
+
+- `subagent` 包独立于 `agent` 包（不 import agent，避免循环依赖）
+- `components/message` 和 `components/block` 互不依赖
+- `components/processing` 依赖 `block` 和 `styles`
+- `components/` 是唯一的组装者，导入 `block`、`message`、`processing` 三个子包
 
 ## 核心架构：Agent 循环
 
@@ -113,20 +142,21 @@ main
 │  │         ├─ ctxMgr.Build(true) 组装上下文  │ │
 │  │         ├─ llmClient.ChatStream() 流式   │ │
 │  │         ├─ withRetry() 指数退避重试       │ │
-│  │         ├─ 首 token → phaseFn("Reasoning")│ │
+│  │         ├─ Content token → phaseFn("Reasoning") │ │
 │  │         ├─ 返回 tool_calls → 解析        │ │
 │  │         ├─ 保存 ReasoningContent         │ │
 │  │         └─ 无 tool_calls → 直接文本回复   │ │
 │  │                                          │ │
 │  │  ② ExecuteBatch(calls) → results         │ │
-│  │     ├─ Surface TextContent 为 "think"    │ │
+│  │     ├─ 并行 ctx 取消检查                  │ │
 │  │     ├─ needsSequential? → 串行/并行      │ │
+│  │     ├─ phaseFn("Running " + name) → 工具名│ │
 │  │     ├─ 检查 DangerLevel                  │ │
 │  │     ├─ LevelWrite+ → confirmFn 确认       │ │
 │  │     └─ tool.Execute() 执行工具            │ │
 │  │                                          │ │
 │  │  ③ Feedback(state, result)              │ │
-│  │     ├─ step++ / shouldStop / shouldRetry │ │
+│  │     ├─ step++ / shouldStop               │ │
 │  │     └─ 构建下一步 stepState              │ │
 │  │                                          │ │
 │  │  ShouldStop? → forceSynthesize()         │ │
@@ -140,21 +170,16 @@ main
 
 ```go
 type stepState struct {
-    Input          string  // 用户原始输入
-    PreviousAction string  // 上一轮动作
-    PreviousOutput string  // 上一轮输出
-    Success        bool    // 上一轮是否成功
-    RetryCount     int     // 重试次数
-    SearchCount    int     // web_search 累计调用数
-    FetchCount     int     // web_fetch 累计调用数
+    Input          string
+    PreviousAction string
+    PreviousOutput string
+    Success        bool
+    RetryCount     int
+    SearchCount    int
+    FetchCount     int
+    lowOutputTurns int
 }
 ```
-
-### Stop 策略
-
-- `shouldStop`: 自定义停止条件（SearchCount >= 4 && FetchCount == 0 → 强制综合）
-- `contextTransform`: 工具结果 > 6 条时注入 "现在综合回答" 指令
-- `maxIterations`: 15 轮后触发 `forceSynthesize()`
 
 ### BTW 中断与 Steer 机制
 
@@ -164,40 +189,25 @@ Agent 处理中用户可输入新消息打断当前 LLM 调用并注入到上下
 ┌─── TUI 层 ──┐     ┌─── Agent 层 ──┐
 │ Enter 按键   │     │                │
 │ m.Bot.Steer()│────→│ steeringCh ← msg
-│ Stream.Reset │     │ replaceCtx()   │  ← 原子取消旧 ctx + 创建新 ctx
-│ SetBlocks(nil)│    │                │
-│ status 更新   │     │ drainSteering()│  ← 拾取消息注入 ctxMgr
-└──────────────┘     │ continue       │  ← 新 Reason() 处理
+│              │     │ replaceCtx()   │  ← 原子取消旧 ctx + 创建新 ctx（保留 parentCtx 链）
+│ status 更新   │     │                │
+└──────────────┘     │ drainSteering()│  ← 拾取消息注入 ctxMgr
+                     │ continue       │  ← 新 Reason() 处理
                      └────────────────┘
 ```
 
-- **Enter** → `Steer()`：注入消息 + 中断当前 LLM 调用，UI 重置 processingStart + Stream
-- **Esc** → `Abort()`：设置 `finished=true` + 取消 ctx，退出循环返回 "已中断"
+- **Enter** → `Steer()`：注入消息 + 中断当前 LLM 调用
+- **Esc** → `Abort()`：设置 `finished=true` + 取消 ctx
 - `callLLMForTool` 检测 `context.Canceled` → 返回 `Interrupted` 标记
-- Run 循环检查 `Interrupted`：`finished=true` → Abort；`finished=false` → drain + continue
-- UI 反馈：Stream 清空 + processingStart 重置 + status 显示 "Processing new input..."
+- `replaceCtx()` 使用 `parentCtx` 保持取消链，不丢失原始上下文
 
 ### 指数退避重试
 
-`retry.go`：LLM 调用失败时自动重试，指数退避 0.5s→1s→2s→4s→8s（最多 4 次）。
-
-```
-callLLMForTool() / forceSynthesize()
-  └─ withRetry(ctx, fn) ──┐
-     ├─ fn() 执行           │
-     ├─ 成功 → 返回         │
-     └─ 失败 → isRetryable?  │
-        ├─ 可重试 (5xx/429/network/timeout) → 退避后重试
-        └─ 不可重试 (4xx/cancel/deadline) → 立即返回错误
-```
-
-- `callLLMForTool` 的整个 ChatStream + token 处理包裹在 retry 闭包内
-- `forceSynthesize` 同样包裹
-- `context.Canceled` 和 `context.DeadlineExceeded` 不重试（用户取消了就是取消了）
+`retry.go`：LLM 调用失败时自动重试，指数退避 0.5s→1s→2s→4s→8s（最多 4 次）。token 统计使用 `firstAttempt` 标记防止重复累加。
 
 ## 共享类型与接口
 
-### BotInterface (tui/model.go)
+### BotInterface (tui/types.go)
 
 ```go
 type BotInterface interface {
@@ -212,21 +222,27 @@ type BotInterface interface {
     Steer(msg string)
     Abort()
     SetStreamFn(fn func(delta string))
+    SetReasoningStreamFn(fn func(delta string))
+    WireTodoWrite(fn tools.TodoFunc)
+    SetCtxTodos(text string)
     Provider() string
     Model() string
 }
 ```
 
-### ConfirmRequest (bot/types)
+### Phase 常量 (bot/types/types.go)
 
 ```go
-type ConfirmRequest struct {
-    ToolName string
-    Args     map[string]interface{}
-    Level    tools.DangerLevel
-    Response chan bool          // TUI 通过此 channel 返回确认结果
-}
+const (
+    PhaseReady     = "Ready"
+    PhaseWaiting   = "Waiting"
+    PhaseThinking  = "Thinking"
+    PhaseReasoning = "Reasoning"
+    PhaseRunning   = "Running"
+)
 ```
+
+Agent 侧和 TUI 侧统一引用 `types.Phase*`，保持单点定义。
 
 ## LLM 抽象层
 
@@ -238,18 +254,17 @@ type LLM interface {
     ChatStream(ctx, messages []Message, tools []ToolDef) (<-chan StreamToken, <-chan error)
     SetAPIKey(apiKey string)
     SetBaseURL(url string)
+    SetMaxTokens(n int)
+    MaxTokens() int
+    SetDisableThinking(disable bool)
 }
 ```
-
-### 共享 HTTP 客户端
-
-`llm.go` 导出 `SharedHTTPClient`（无超时，用于流式）和 `SharedHTTPClientTimeout`（120s 超时，用于同步调用）。底层共享 `http.Transport` 连接池（MaxIdleConns=20, IdleConnTimeout=90s）。
 
 ### Provider 适配
 
 | Provider | 实现文件 | 特殊处理 |
 |----------|---------|---------|
-| OpenAI / GLM / DeepSeek | `openai_compat.go` | `/chat/completions`，流式 tool_calls 遍历 |
+| OpenAI / GLM / DeepSeek | `openai_compat.go` | `/chat/completions`，thinking 参数控制 |
 | Anthropic | `anthropic.go` | `/v1/messages`，SSE content_block_start/delta 解析 |
 
 ## 工具系统
@@ -271,29 +286,21 @@ type Tool interface {
 
 | 模式 | 说明 | 工具 |
 |------|------|------|
-| `ModeParallel` | 可并发执行 | glob, grep, web_search, web_fetch, filesystem(read/list) |
-| `ModeSequential` | 独占执行 | bash, edit, filesystem(write) |
+| `ModeParallel` | 可并发执行 | glob, grep, web_search, web_fetch, read, list, task, todo_write |
+| `ModeSequential` | 独占执行 | bash, edit, write |
 
 ### 危险等级
 
 ```
 LevelSafe        (0) — 只读，自动放行
-LevelWrite       (1) — 写操作，弹框确认
+LevelWrite       (1) — 写操作，弹框确认（bash 命令默认此级别）
 LevelDestructive (2) — 破坏操作，弹框确认
 LevelForbidden   (3) — 永远禁止
 ```
 
-### 内建工具
+### 路径安全
 
-| 工具 | 文件 | 说明 |
-|------|------|------|
-| BashTool | `tool_bash.go` | Shell 命令执行，四级关键词匹配分级，ANSI 转义序列清理 |
-| FileSystemTool | `tool_filesystem.go` | 文件 read/write/list，SHA256 读缓存去重，智能截断 |
-| GlobTool | `tool_glob.go` | 文件模式匹配 |
-| GrepTool | `tool_grep.go` | ripgrep 内容搜索，支持 regex/glob/context |
-| EditTool | `tool_edit.go` | 精确字符串替换，失败返回带行号的文件内容 + diff |
-| WebSearchTool | `tool_websearch.go` | Exa AI MCP 优先（free tier），Bing HTML 降级，numResults 可配 |
-| WebFetchTool | `tool_webfetch.go` | HTTP GET + HTML→Markdown，DNS 内网校验，prompt 指导提取 |
+`write` 和 `edit` 工具通过 `validatePath()` 校验路径不逃逸工作目录（拒绝 `..` 穿越）。
 
 ## 确认机制
 
@@ -301,6 +308,7 @@ LevelForbidden   (3) — 永远禁止
 Agent goroutine                    TUI goroutine
   │                                  │
   ├─ executeOne()                    │
+  ├─ phaseFn("Running " + name)      │  ← phase 在确认前设置
   ├─ level >= LevelWrite             │
   ├─ confirmFn(req) ────→ confirmCh  │
   │  (阻塞)               ↓          │
@@ -322,33 +330,33 @@ Model
 ├── Splash         — 启动页 (ASCII 猫 + 猫眼闪烁)
 ├── Messages + Scrollbar — 消息列表 + 独立滚动指示器
 │   ├── UserMessageItem        — 金色 ▐ 粗条 "You"
-│   ├── AssistantMessageItem   — 青色 ▐ 粗条 "Assistant" + ContentBlock + Footer
+│   ├── AssistantMessageItem   — teal ▐ 粗条 "Assistant" + ContentBlock + Footer
 │   ├── SystemMessageItem      — 蓝色 ▐ 粗条 "·"
 │   ├── ErrorMessageItem       — 红色 ▐ 粗条 "!"
-│   └── ProcessingItem         — 绿色 │ ◉ spinner + Phase + Blocks
+│   └── ProcessingItem         — teal │ ◉ spinner + Phase + Blocks
 ├── Suggestions    — 斜杠命令自动补全
 ├── Input          — 消息输入框（历史翻阅、tab 补全）
 └── ConfirmBar     — 工具确认卡片
 ```
 
-### 视觉方案（Plan B：厚左色条）
+### 视觉方案（厚左色条）
 
-每条消息用 `▐`（U+2590）厚色条 + `PaddingLeft(1)` 替代旧版 `│` 细线。lipgloss `BorderLeft` 块级渲染，不与内容 ANSI 混拼。
+每条消息用 `▐`（U+2590）厚色条 + `PaddingLeft(1)` 统一缩进。
 
 | 角色 | 色条颜色 |
 |------|---------|
 | User | 暖金 `#c9a96e` |
-| Assistant | 青色 `#4ec9b0` |
+| Assistant | teal `#4ec9b0` |
 | System | 蓝色 `#7a8ba0` |
 | Error | 红色 `#e06c75` |
 
-### 结构化内容块 (ContentBlock)
+### 内容块 (ContentBlock)
 
 ```go
 type ContentBlock struct {
-    Type       BlockType  // BlockToolCall / BlockThinking / BlockText
-    Content    string     // 渲染文本
-    ToolName   string     // 工具名（仅 BlockToolCall）
+    Type       BlockType  // BlockTool / BlockThought / BlockReason
+    Content    string     // 渲染文本（edit 工具的 diff 嵌入此处）
+    ToolName   string     // 工具名
     ToolArgs   string     // 简要参数
     Collapsed  bool       // 折叠状态
     BatchIdx   int        // 并行批次序号
@@ -356,59 +364,32 @@ type ContentBlock struct {
 }
 ```
 
-- **BlockToolCall**: 聚合在单一 `NormalBorder` 卡片中，暖金色边框。折叠态显示 `◆ toolName args [+]`，展开态显示完整输出。多个工具共用一个卡片
-- **BlockThinking**: `💭` 前缀 + Subtle 色，多行自动缩进对齐，工具卡前后自动加空行
-- `ctrl+e` 翻转所有 tool block 的 Collapsed
+- **BlockTool**: 暖金色卡片。仅 `edit` 工具显示 `[+]`/`[-]` 折叠，展开后渲染 diff（+/- 行着色）。所有块首行统一 2 字符缩进
+- **BlockThought/BlockReason**: `💭` 前缀 + Subtle/Muted 色，首行前缀对齐
+- `ctrl+e` 翻转所有 edit 工具块的 Collapsed
 
-### 处理阶段 (phase.go)
+### 流式渲染
 
-```
-Ready ──→ Thinking ──→ Reasoning ──→ Running ──→ Thinking ──→ ... ──→ Ready
-```
-
-| 阶段 | 触发 |
-|------|------|
-| Ready | 空闲 |
-| Thinking | transitionTo(StateProcessing) / Reason() |
-| Reasoning | callLLMForTool 首 token |
-| Running | executor 开始执行工具 |
-
-### 流式输出
-
-不展示 raw markdown token。处理中只显示结构化块（💭 思考 + 工具卡片），最终回答一次 glamour 渲染。
+处理中显示结构化卡片（工具 + output/reasoning 分区），output 和 reasoning 区块动态高度（2-6 行），分隔线横跨全宽。最终回答一次 glamour 渲染。
 
 ### TUI 消息流
 
 ```go
 tea.Batch(
-    m.Spinner.Tick,           // spinner 动画
-    listenConfirm(confirmCh), // 确认请求监听
-    func() tea.Msg {          // Agent 执行 (goroutine)
-        m.Bot.RunAgent(input, callback)
-        return doneMsg{content, duration, tokens, err}
-    },
+    spinnerTick(),
+    listenConfirm(m.confirmCh),
+    m.runAgent(value),
 )
 ```
 
-- `think` 回调 → `BlockThinking`追加到 Stream
-- `execute_tool` 回调 → `BlockToolCall`追加到 Stream
-- `chat` 回调 → 设置 `finalResponse` + BlockThinking
-- `handleDone` 滤掉最后一条 BlockThinking（最终回答），其余保留在 Blocks
-
-### Footer 元数据
-
-`doneMsg` 携带 `duration` 和 `tokens`，通过 `ChatMessage.Footer` 字段传递。渲染为 Subtle 色文本，置于消息内容下方，不经 glamour。
+- `tool_start` 回调 → 立即创建 collapsed BlockTool（所有工具）
+- `execute_tool` 回调 → 仅 edit 工具追加 diff 内容
+- `chat` 回调 → 设置 finalResponse + BlockThought
+- `handleDone` 滤掉 ephemeral 块，保留 BlockTool 在最终消息
 
 ## 上下文管理
 
-`bot/ctxmgr/` 拆分为 4 文件：
-
-- `manager.go`: Manager struct + Build() 组装 + 统计
-- `storage.go`: Add/AddToolResult/Clear
-- `token.go`: 语言感知 token 估算（CJK ~1.5/token, ASCII ~4/token, ceiling 除法防零）
-- `summarize.go`: Summarize/BuildPrompt — **结构化摘要**
-
-核心策略：**Hybrid Window + Structured Summary**。窗口大小 20，token 预算默认 64000。超出时 `Summarize()` 将前半压缩为六段结构化摘要：
+核心策略：**Hybrid Window + Structured Summary**。窗口大小 20，token 预算默认 64000。
 
 ```
 [目标] 用户正在完成的目标
@@ -419,18 +400,13 @@ tea.Batch(
 [相关文件] 关键文件路径及作用
 ```
 
-- 增量更新：已有摘要时在原基础上增删改，而非重新生成
-- 锚定策略：连续多次压缩保持信息连续性
-- Tool 消息保留 800 字符截断（信息密度更高），其他 500
-- BuildPrompt 英文模板，compaction agent 无工具纯文本
+- 增量更新：已有摘要时在原基础上增删改
+- Build() 保护 tool_calls/tool_result 配对不被截断
+- 语言感知 token 估算（CJK ~1.5/token, ASCII ~4/token）
 
 ## Markdown 渲染
 
 `glamour` 封装（tokyo-night 主题 + document margin=0 + 全宽度预热 40-160）。
-
-- `Warmup()` 启动时预创建 121 个 renderer，避免懒加载 chroma lexer（~6s）阻塞首次渲染
-- `PaddingLeft(1)` 统一提供消息缩进，glamour margin=0 保证一致性
-- `stripLeadingSpaces()` 兼容旧 glamour 输出
 
 ## 配置
 
@@ -445,5 +421,3 @@ tea.Batch(
   "token_budget": 128000
 }
 ```
-
-支持 provider: `openai` / `anthropic` / `glm`。

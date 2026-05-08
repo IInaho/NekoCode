@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -43,6 +45,19 @@ const (
 	ModeParallel   ExecutionMode = iota // can run concurrently with other tools
 	ModeSequential                      // must run alone, blocks other tools
 )
+
+type ToolCallItem struct {
+	ID   string
+	Name string
+	Args map[string]interface{}
+}
+
+type ToolCallResult struct {
+	ID     string
+	Name   string
+	Output string
+	Error  string
+}
 
 type Tool interface {
 	Name() string
@@ -188,12 +203,16 @@ func unquote(s string) string {
 
 func RegisterDefaults(r *Registry) {
 	r.Register(&BashTool{})
-	r.Register(&FileSystemTool{})
+	r.Register(&ReadTool{})
+	r.Register(&WriteTool{})
+	r.Register(&ListTool{})
 	r.Register(&GlobTool{})
 	r.Register(&EditTool{})
 	r.Register(&GrepTool{})
 	r.Register(NewWebSearchTool())
 	r.Register(NewWebFetchTool())
+	r.Register(NewTodoWriteTool())
+	r.Register(NewTaskTool())
 }
 
 var ansiRegex = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
@@ -215,10 +234,41 @@ func NewToolHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+func humanSize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1fM", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1fK", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
+}
+
 func TruncateByRune(s string, max int) string {
 	runes := []rune(s)
 	if len(runes) <= max {
 		return s
 	}
 	return string(runes[:max])
+}
+
+// validatePath resolves path against the current working directory and rejects
+// paths that escape via ".." traversal.
+func validatePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("路径解析失败: %v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return abs, nil // can't validate, trust the path
+	}
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("路径超出工作目录范围: %s", path)
+	}
+	return abs, nil
 }

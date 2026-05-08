@@ -66,11 +66,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 // --- Exa MCP (JSON-RPC over SSE) ---
 
 func exaEndpoint() string {
-	u := "https://mcp.exa.ai/mcp"
-	if k := os.Getenv("EXA_API_KEY"); k != "" {
-		u += "?exaApiKey=" + url.QueryEscape(k)
-	}
-	return u
+	return "https://mcp.exa.ai/mcp"
 }
 
 func searchExa(ctx context.Context, query string, n int) (string, error) {
@@ -93,6 +89,9 @@ func searchExa(ctx context.Context, query string, n int) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, "POST", exaEndpoint(), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+		if k := os.Getenv("EXA_API_KEY"); k != "" {
+			req.Header.Set("X-Api-Key", k)
+		}
 
 	resp, err := NewToolHTTPClient(30*time.Second).Do(req)
 	if err != nil {

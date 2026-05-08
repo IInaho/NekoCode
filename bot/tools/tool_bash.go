@@ -17,7 +17,20 @@ func (t *BashTool) Name() string { return "bash" }
 	func (t *BashTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
 
 func (t *BashTool) Description() string {
-	return "执行 shell 命令"
+	return `执行 shell 命令。
+
+IMPORTANT: 避免用此工具运行 find、grep、cat、head、tail、sed、awk、echo——用专用工具替代：
+- 文件搜索: Glob (不用 find/ls)
+- 内容搜索: Grep (不用 grep/rg)
+- 读文件: Read (不用 cat/head/tail)
+- 编辑文件: Edit (不用 sed/awk)
+- 写文件: Write (不用 echo >/cat <<EOF)
+
+规则:
+- 创建目录/文件前验证父目录存在。用绝对路径，避免 cd
+- 用 && 串联依赖命令。NEVER 用 newlines 分隔命令
+- Git: NEVER update git config, NEVER skip hooks (--no-verify), NEVER force push to main/master
+- CRITICAL: 始终创建 NEW commit，不要 amend`
 }
 
 func (t *BashTool) Parameters() []Parameter {
@@ -55,7 +68,7 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 		return LevelWrite
 	}
 
-	return LevelSafe
+	return LevelWrite
 }
 
 func matchAny(cmd string, patterns []string) bool {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"primusbot/bot/tools"
+	"primusbot/bot/types"
 	"primusbot/llm"
 )
 
@@ -38,7 +39,7 @@ type ReasoningResult struct {
 
 func (a *Agent) Reason(state *stepState) *ReasoningResult {
 	if a.phaseFn != nil {
-		a.phaseFn("Thinking")
+		a.phaseFn(types.PhaseThinking)
 	}
 	if strings.HasPrefix(state.Input, "/") {
 		return &ReasoningResult{
@@ -109,6 +110,7 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 	var textContent string
 
 	err := withRetry(a.getCtx(), func() error {
+	firstAttempt := true
 		messages := a.ctxMgr.Build(true)
 		if a.transformContext != nil {
 			messages = a.transformContext(messages)
@@ -132,25 +134,45 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		for _, m := range messages {
 			ctxChars += len(m.Content) + len(m.Role)
 		}
-		a.AddTokens(ctxChars/4, 0)
+		estPrompt := ctxChars / 4
+		estCompl := 0
+		if firstAttempt { a.AddTokens(estPrompt, 0); firstAttempt = false }
 
+		finishReason := ""
+		phaseWaiting := true
+		phaseThink := true
 		for token := range tokenCh {
-			if token.Content != "" {
-				if textBuf.Len() == 0 && a.phaseFn != nil {
-					a.phaseFn("Reasoning")
+			if phaseWaiting && token.ReasoningContent != "" {
+				phaseWaiting = false
+				if a.phaseFn != nil {
+					a.phaseFn(types.PhaseThinking)
 				}
+			}
+			if phaseThink && token.Content != "" {
+				phaseThink = false
+				if a.phaseFn != nil {
+					a.phaseFn(types.PhaseReasoning)
+				}
+			}
+			if token.Content != "" {
 				textBuf.WriteString(token.Content)
 				if a.streamFn != nil {
 					a.streamFn(token.Content, false)
 				}
+				estCompl++
 				a.AddTokens(0, 1)
 			}
 			if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
-				a.ResetTokens()
-				a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+				a.AddTokens(token.Usage.PromptTokens-estPrompt, token.Usage.CompletionTokens-estCompl)
+			}
+			if token.FinishReason != "" {
+				finishReason = token.FinishReason
 			}
 			if token.ReasoningContent != "" {
 				reasoningBuf.WriteString(token.ReasoningContent)
+				if a.reasoningFn != nil {
+					a.reasoningFn(token.ReasoningContent)
+				}
 				writeAgentLog("ReasoningContent[%d]: %q", len(token.ReasoningContent), token.ReasoningContent)
 			}
 			if token.ToolCallDelta != nil {
@@ -167,6 +189,15 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 					acc.name = token.ToolCallDelta.Name
 				}
 				acc.args.WriteString(token.ToolCallDelta.Arguments)
+			}
+		}
+
+		// Escalate max_tokens if model hit output limit without tool calls.
+		if finishReason == "length" && len(tcAccum) == 0 {
+			if l, ok := a.llmClient.(interface{ MaxTokens() int }); ok && l.MaxTokens() < 64000 {
+				writeAgentLog("callLLM: finish_reason=length, escalating max_tokens to 64000")
+				if setter, ok := l.(interface{ SetMaxTokens(int) }); ok { setter.SetMaxTokens(64000) }
+				return fmt.Errorf("output token limit hit, retrying with higher limit")
 			}
 		}
 
@@ -232,6 +263,7 @@ type toolAccum struct {
 func (a *Agent) forceSynthesize() string {
 	var text string
 	err := withRetry(a.getCtx(), func() error {
+	firstAttempt := true
 		messages := a.ctxMgr.Build(false)
 		messages = append(messages, llm.Message{
 			Role: "user", Content: a.synthesizePrompt,
@@ -251,21 +283,43 @@ func (a *Agent) forceSynthesize() string {
 		for _, m := range messages {
 			ctxChars += len(m.Content) + len(m.Role)
 		}
-		a.AddTokens(ctxChars/4, 0)
+		estPrompt := ctxChars / 4
+		estCompl := 0
+		if firstAttempt { a.AddTokens(estPrompt, 0); firstAttempt = false }
 
+		finishReason := ""
+		firstToken := true
 		for token := range tokenCh {
+			if firstToken && token.Content != "" {
+				firstToken = false
+				if a.phaseFn != nil {
+					a.phaseFn(types.PhaseReasoning)
+				}
+			}
 			if token.Content != "" {
 				textBuf.WriteString(token.Content)
 				if a.streamFn != nil {
 					a.streamFn(token.Content, false)
 				}
+				estCompl++
 				a.AddTokens(0, 1)
 			}
 			if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
-				a.ResetTokens()
-				a.AddTokens(token.Usage.PromptTokens, token.Usage.CompletionTokens)
+				a.AddTokens(token.Usage.PromptTokens-estPrompt, token.Usage.CompletionTokens-estCompl)
+			}
+			if token.FinishReason != "" {
+				finishReason = token.FinishReason
 			}
 		}
+
+		if finishReason == "length" {
+			if l, ok := a.llmClient.(interface{ MaxTokens() int }); ok && l.MaxTokens() < 64000 {
+				writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens to 64000")
+				if setter, ok := l.(interface{ SetMaxTokens(int) }); ok { setter.SetMaxTokens(64000) }
+				return fmt.Errorf("output token limit hit, retrying with higher limit")
+			}
+		}
+
 		select {
 		case err := <-errCh:
 			if err != nil {

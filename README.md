@@ -37,31 +37,35 @@
 ### 亮点
 
 **🎨 精心打磨的 TUI 体验**
-- **Plan B 厚左色条**：`▐` 粗块 + 角色专属配色（金/青/蓝/红），lipgloss 块级渲染，UI 与内容零 ANSI 混拼
-- **工具卡片**：暖金色边框独立卡片，可折叠，多工具聚合在单一卡片
-- **独立 Scrollbar**：自管理渲染，与消息列表并列排版，无宽度冲突
-- **💭 思考过程**：实时展示 Agent 推理链，工具调用与思考文本穿插
-- tokoyo-night markdown 主题 + glamour 增量渲染
+- **厚左色条**：`▐` 粗块 + 角色专属配色（金/teal/蓝/红），lipgloss 块级渲染
+- **工具卡片**：暖金色边框，仅 edit 工具可折叠展开 diff（+/- 行着色）
+- **独立 Scrollbar**：自管理渲染，与消息列表并列排版
+- **💭 思考过程**：实时展示 Agent 推理链，output/reasoning 分区显示
+- **分隔线**：output（teal）和 reasoning（蓝）横跨全宽分隔线，动态 2-6 行高度
+- tokyo-night markdown 主题 + glamour 渲染
 
 **⚡ 轻量高效的 Agent 循环**
 - Reason → Execute → Feedback 三轮循环，最多 15 步
-- 并行工具调度：独立工具（glob+grep+web_search）worker pool 并发，任一 Sequential 降级串行
-- ShouldStop 策略：搜索 4 轮无 fetch → 强制综合；工具结果 > 6 → 注入综合指令
-- 上下文 Hybrid Window + Summary：滑窗 + 自动摘要 + 语言感知 token 估算
+- 并行工具调度：独立工具 worker pool 并发（上限 10），ctx 取消检查
+- 子 Agent 系统：5 种内置类型（executor/verify/explore/plan/decompose），独立上下文，thinking 关闭
+- BTW 中断：处理中输入 Enter 注入新消息 + 打断 LLM 调用
+- 指数退避重试：0.5s→8s，token 统计防重复
 
 **🔧 丰富的工具链**
-- bash（四级危险分级 + ANSI 清理）、filesystem（SHA256 去重）、glob、grep、edit（+ diff）
-- web_search（Bing HTML 解析 + CJK 排序）、web_fetch（DNS 安全校验）
+- bash（全部需确认 + 危险命令拒绝）、read、write、edit（+ diff）、list、glob（支持 **）、grep
+- web_search（Exa MCP + Bing 降级）、web_fetch（DNS 安全校验）
+- task（子 agent 委派）、todo_write（任务跟踪）
+- 路径穿越防护、ANSI 清理
 
 **🔌 多 Provider 统一网关**
-- Anthropic：SSE content_block_start/delta 流式解析，tool_use 双向转换
-- OpenAI / GLM / DeepSeek：统一 OpenAICompatible 实现，共享 HTTP 连接池
-- ReasoningContent 透传 + 增量 token 统计
+- Anthropic：SSE content_block_start/delta 流式解析
+- OpenAI / GLM / DeepSeek：统一 OpenAICompatible 实现，thinking 参数控制
+- 共享 HTTP 连接池，ReasoningContent 透传
 
 **🧩 组件化解耦**
-- `BotInterface` 14 方法接口，TUI 与 bot 零耦合
-- `phase.go` 独立状态模块：Ready → Thinking → Reasoning → Running
-- ctxmgr 4 文件拆分 + tui 21 组件文件 + llm 4 provider 文件
+- `BotInterface` 17 方法接口，TUI 与 bot 零耦合
+- `bot/types` Phase 常量统一定义，agent 和 TUI 两边引用
+- TUI 38 文件，block/message/processing 三个子包，单一职责
 
 ---
 
@@ -94,11 +98,11 @@ go build -o primusbot .
 
 | | | | |
 |:--|:--|:--|:--|
-| **聊天** | 自然对话，软萌猫娘角色 | **Shell** | 本地命令，四级权限分级 |
-| **文件** | 读取、写入、列出目录 | **搜索** | glob 模式 + ripgrep + web |
-| **编辑** | 精确字符串替换 + diff | **摘要** | 长对话自动压缩记忆 |
+| **聊天** | 自然对话，软萌猫娘角色 | **Shell** | 本地命令，全部确认 + 危险拒绝 |
+| **文件** | read / write / edit + diff | **搜索** | glob(含**) + ripgrep + web |
+| **子 Agent** | 5 种类型并行委派 | **摘要** | 长对话自动压缩记忆 |
 | **确认** | 写/危险操作弹框确认 | **命令** | `/` 斜杠命令 + 实时提示 |
-| **折叠** | `ctrl+e` 展开工具卡片 | **Provider** | OpenAI / Anth / GLM / DS |
+| **折叠** | `ctrl+e` 展开 edit 工具 diff | **Provider** | OpenAI / Anth / GLM / DS |
 
 ---
 
@@ -110,7 +114,7 @@ go build -o primusbot .
 | `/clear` | 清空对话历史 |
 | `/stats` | 上下文用量 |
 | `/summarize` | 手动压缩记忆 |
-| `/config` | 当前 provider/model |
+| `/config` | 当前 provider / model |
 
 输入 `/` 自动弹出提示，Tab 选择，Enter 填入。
 
@@ -120,8 +124,8 @@ go build -o primusbot .
 
 | 等级 | 行为 | 示例 |
 |:--|:--|:--|
-| `safe` | 自动放行 | `ls` `cat` `find` `pwd` |
-| `write` | 弹框确认 | `mkdir` `cp` `git commit` |
+| `safe` | 自动放行 | `read` `glob` `grep` `list` |
+| `write` | 弹框确认 | `write` `edit` `bash` `mkdir` |
 | `destructive` | 红色确认 | `rm` `kill` `git push -f` |
 | `forbidden` | 直接拒绝 | `sudo` `curl\|bash` `ssh` |
 
@@ -131,12 +135,17 @@ go build -o primusbot .
 
 ```
 primusbot/
-├── bot/         核心逻辑：Agent 循环 + 工具系统 + 扩展 + 类型
-├── ctxmgr/      上下文管理：滑窗 + 摘要 + token 估算（4 文件）
-├── llm/         LLM 网关：Anthropic / OpenAI 兼容（4 文件）
-├── tui/         Bubble Tea v2 终端界面，BotInterface 解耦（21 文件）
-├── docs/        架构 · 设计 · 路线图
-└── main.go      入口
+├── main.go             入口
+├── llm/                LLM 网关：Anthropic / OpenAI 兼容（4 文件）
+├── bot/
+│   ├── bot.go          核心组装
+│   ├── config.go        配置 + 斜杠命令
+│   ├── types/           共享类型 + Phase 常量
+│   ├── extensions/      插件接口
+│   ├── ctxmgr/          上下文管理（4 文件）
+│   ├── tools/           工具系统（12 工具）
+│   └── agent/           Agent 循环 + 子 agent 引擎
+└── tui/                终端 UI（38 文件，block/message/processing 子包）
 ```
 
 ---
@@ -144,7 +153,7 @@ primusbot/
 ### 文档
 
 - [架构文档](docs/ARCHITECTURE.md) — Agent 循环 · 数据流 · 上下文管理 · 组件树
-- [设计文档](docs/DESIGN.md) — 交互设计 · 视觉方案 · 权限分级 · ContentBlock
+- [设计文档](docs/DESIGN.md) — 交互设计 · 视觉方案 · 权限分级 · 子 Agent
 - [开发路线](docs/PLAN.md) — 已完成 & 后续计划
 
 ---

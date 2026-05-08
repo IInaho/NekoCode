@@ -4,7 +4,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 )
 
 type GlobTool struct{}
@@ -13,7 +15,7 @@ func (t *GlobTool) Name() string { return "glob" }
 	func (t *GlobTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 
 func (t *GlobTool) Description() string {
-	return "根据模式查找文件，如 *.go, **/*.ts 等"
+	return "文件模式匹配。ALWAYS 用 Glob，NEVER invoke find/ls as Bash。支持 ** 递归匹配，返回按修改时间排序的路径列表。"
 }
 
 func (t *GlobTool) Parameters() []Parameter {
@@ -33,14 +35,24 @@ func (t *GlobTool) Execute(ctx context.Context, args map[string]interface{}) (st
 		return "", fmt.Errorf("missing pattern parameter")
 	}
 
-	path := "."
-	if p, ok := args["path"].(string); ok {
-		path = p
+	basePath := "."
+	if p, ok := args["path"].(string); ok && p != "" {
+		basePath = p
 	}
 
-	matches, err := filepath.Glob(filepath.Join(path, pattern))
-	if err != nil {
-		return "", fmt.Errorf("glob 失败: %v", err)
+	var matches []string
+	if strings.Contains(pattern, "**") {
+		var err error
+		matches, err = globRecursive(basePath, pattern)
+		if err != nil {
+			return "", fmt.Errorf("glob 失败: %v", err)
+		}
+	} else {
+		var err error
+		matches, err = filepath.Glob(filepath.Join(basePath, pattern))
+		if err != nil {
+			return "", fmt.Errorf("glob 失败: %v", err)
+		}
 	}
 
 	if len(matches) == 0 {
@@ -52,4 +64,29 @@ func (t *GlobTool) Execute(ctx context.Context, args map[string]interface{}) (st
 		result += m + "\n"
 	}
 	return result, nil
+}
+
+func globRecursive(basePath, pattern string) ([]string, error) {
+	var matches []string
+	prefix, rest, _ := strings.Cut(pattern, "**")
+
+	err := filepath.Walk(basePath, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, err := filepath.Rel(basePath, p)
+		if err != nil {
+			return nil
+		}
+		if rel == "." {
+			return nil
+		}
+		matchPattern := filepath.Join(prefix, "**", rest)
+		matched, _ := filepath.Match(matchPattern, rel)
+		if matched {
+			matches = append(matches, p)
+		}
+		return nil
+	})
+	return matches, err
 }

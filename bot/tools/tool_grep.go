@@ -14,7 +14,7 @@ func (t *GrepTool) Name() string { return "grep" }
 	func (t *GrepTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 
 func (t *GrepTool) Description() string {
-	return "基于 ripgrep 的内容搜索。在文件中搜索正则模式，返回匹配行及行号。支持文件过滤和上下文行数。"
+	return "基于 ripgrep 的内容搜索。返回匹配行及行号。ALWAYS 用 Grep 搜索内容，NEVER invoke grep/rg as Bash。支持 full regex syntax，literal braces 需 escaping。支持 glob 过滤文件类型、-A/-B/-C context lines、multiline 模式。"
 }
 
 func (t *GrepTool) Parameters() []Parameter {

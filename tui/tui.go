@@ -1,5 +1,5 @@
+// tui.go — package tui 入口。
 package tui
-
 import (
 	"fmt"
 

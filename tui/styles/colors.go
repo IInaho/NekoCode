@@ -3,17 +3,31 @@
 // Styles struct + DefaultStyles() + 包级便捷变量。
 package styles
 
-import "charm.land/lipgloss/v2"
+import (
+	"fmt"
+
+	"charm.land/lipgloss/v2"
+)
+
+// Exported color hex values for direct use by other packages.
+const (
+	Primary   = "#4ec9b0"
+	Yellow    = "#c9a96e"
+	Red       = "#e06c75"
+	Blue      = "#7a8ba0"
+	DiffGreen = "#98c379"
+	DiffSubtle = "#5c6370"
+)
 
 const (
 	fgText   = "#a0a0a0"
 	fgMuted  = "#808080"
 	fgSubtle = "#666666"
 	fgBorder = "#333333"
-	primary  = "#4ec9b0"
-	blue     = "#7a8ba0"
-	red      = "#e06c75"
-	yellow   = "#c9a96e"
+	teal     = Primary
+	blueInt  = Blue
+	redInt   = Red
+	yellow   = Yellow
 	catBody  = "#505050"
 	catEye   = "#7ec8e3"
 )
@@ -23,7 +37,7 @@ type Styles struct {
 	Muted     lipgloss.Style
 	Subtle    lipgloss.Style
 	Primary   lipgloss.Style
-	Green     lipgloss.Style
+	Teal      lipgloss.Style
 	Blue      lipgloss.Style
 	Red       lipgloss.Style
 	Yellow    lipgloss.Style
@@ -41,10 +55,10 @@ func DefaultStyles() Styles {
 		Base:    lipgloss.NewStyle().Foreground(lipgloss.Color(fgText)),
 		Muted:   lipgloss.NewStyle().Foreground(lipgloss.Color(fgMuted)),
 		Subtle:  lipgloss.NewStyle().Foreground(lipgloss.Color(fgSubtle)),
-		Primary: lipgloss.NewStyle().Foreground(lipgloss.Color(primary)),
-		Green:   lipgloss.NewStyle().Foreground(lipgloss.Color(primary)),
-		Blue:    lipgloss.NewStyle().Foreground(lipgloss.Color(blue)),
-		Red:     lipgloss.NewStyle().Foreground(lipgloss.Color(red)),
+		Primary: lipgloss.NewStyle().Foreground(lipgloss.Color(teal)),
+		Teal:    lipgloss.NewStyle().Foreground(lipgloss.Color(teal)),
+		Blue:    lipgloss.NewStyle().Foreground(lipgloss.Color(blueInt)),
+		Red:     lipgloss.NewStyle().Foreground(lipgloss.Color(redInt)),
 		Yellow:  lipgloss.NewStyle().Foreground(lipgloss.Color(yellow)),
 		Border:  lipgloss.NewStyle().Foreground(lipgloss.Color(fgBorder)),
 		CatBody: lipgloss.NewStyle().Foreground(lipgloss.Color(catBody)),
@@ -63,11 +77,16 @@ var (
 	MutedStyle   = defaultStyles.Muted
 	SubtleStyle  = defaultStyles.Subtle
 	PrimaryStyle = defaultStyles.Primary
-	GreenStyle   = defaultStyles.Green
-	BlueStyle    = defaultStyles.Blue
-	RedStyle     = defaultStyles.Red
-	YellowStyle  = defaultStyles.Yellow
+	TealStyle    = defaultStyles.Teal
 	BorderStyle  = defaultStyles.Border
 	CatBodyStyle = defaultStyles.CatBody
 	CatEyeStyle  = defaultStyles.CatEye
 )
+
+// FmtTokens formats a token count for display (e.g. 1200 → "1.2k").
+func FmtTokens(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d", n)
+}

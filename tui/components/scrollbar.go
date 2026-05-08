@@ -1,5 +1,5 @@
+// scrollbar.go — 垂直滚动条指示器。
 package components
-
 import (
 	"strings"
 
@@ -15,21 +15,32 @@ type Scrollbar struct {
 	viewportHeight int
 	scrollPercent  float64
 	sty            *styles.Styles
+
+	cachedView  string
+	cachedDirty bool
 }
 
 func NewScrollbar(sty *styles.Styles) *Scrollbar {
-	return &Scrollbar{sty: sty}
+	return &Scrollbar{sty: sty, cachedDirty: true}
 }
 
 func (s *Scrollbar) Update(totalHeight, viewportHeight int, scrollPercent float64) {
+	if s.totalHeight == totalHeight && s.viewportHeight == viewportHeight && s.scrollPercent == scrollPercent {
+		return
+	}
 	s.totalHeight = totalHeight
 	s.viewportHeight = viewportHeight
 	s.scrollPercent = scrollPercent
+	s.cachedDirty = true
 }
 
 func (s *Scrollbar) View() string {
 	if s.totalHeight <= s.viewportHeight || s.viewportHeight <= 0 {
 		return ""
+	}
+
+	if !s.cachedDirty {
+		return s.cachedView
 	}
 
 	thumbSize := max(1, s.viewportHeight*s.viewportHeight/s.totalHeight)
@@ -51,12 +62,8 @@ func (s *Scrollbar) View() string {
 		}
 	}
 
-	return lipgloss.NewStyle().Width(1).Render(sb.String())
+	s.cachedView = lipgloss.NewStyle().Width(1).Render(sb.String())
+	s.cachedDirty = false
+	return s.cachedView
 }
 
-func (s *Scrollbar) Height() int {
-	if s.totalHeight <= s.viewportHeight {
-		return 0
-	}
-	return s.viewportHeight
-}

@@ -11,19 +11,24 @@ import (
 
 // OpenAICompatible handles any OpenAI-compatible API (OpenAI, GLM, DeepSeek, etc.).
 type OpenAICompatible struct {
-	APIKey      string
-	BaseURL     string
-	Model       string
-	maxTokens   int
-	temperature float64
+	APIKey          string
+	BaseURL         string
+	Model           string
+	maxTokens       int
+	temperature     float64
+	disableThinking bool
 }
+
+func (c *OpenAICompatible) SetMaxTokens(n int)              { c.maxTokens = n }
+func (c *OpenAICompatible) MaxTokens() int                   { return c.maxTokens }
+func (c *OpenAICompatible) SetDisableThinking(disable bool) { c.disableThinking = disable }
 
 func newOpenAICompat(apiKey, baseURL, model string) *OpenAICompatible {
 	return &OpenAICompatible{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
 		Model:       model,
-		maxTokens:   4096,
+		maxTokens:   32000,
 		temperature: 0.7,
 	}
 }
@@ -53,6 +58,9 @@ func (c *OpenAICompatible) Chat(ctx context.Context, messages []Message, tools [
 	if len(tools) > 0 {
 		body["tools"] = tools
 		body["tool_choice"] = "auto"
+		if c.disableThinking {
+			body["thinking"] = map[string]string{"type": "disabled"}
+		}
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -99,6 +107,9 @@ func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, t
 	if len(tools) > 0 {
 		body["tools"] = tools
 		body["tool_choice"] = "auto"
+		if c.disableThinking {
+			body["thinking"] = map[string]string{"type": "disabled"}
+		}
 	}
 
 	jsonBody, _ := json.Marshal(body)
@@ -145,22 +156,23 @@ func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, t
 			if chunk == nil || len(chunk.Choices) == 0 {
 				continue
 			}
-			delta := chunk.Choices[0].Delta
-			token := StreamToken{
-				Content:          delta.Content,
-				ReasoningContent: delta.ReasoningContent,
-				Usage:            chunk.Usage,
-			}
-			if token.Content != "" || token.ReasoningContent != "" || token.Usage != nil {
-				tokenChan <- token
-			}
-			for _, tc := range delta.ToolCalls {
-				tokenChan <- StreamToken{
-					ToolCallDelta: &ToolCallDelta{
-						Index: tc.Index, ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments,
-					},
+				delta := chunk.Choices[0].Delta
+				token := StreamToken{
+					Content:          delta.Content,
+					ReasoningContent: delta.ReasoningContent,
+					Usage:            chunk.Usage,
+					FinishReason:     chunk.Choices[0].FinishReason,
 				}
-			}
+				if token.Content != "" || token.ReasoningContent != "" || token.Usage != nil || token.FinishReason != "" {
+					tokenChan <- token
+				}
+				for _, tc := range delta.ToolCalls {
+					tokenChan <- StreamToken{
+						ToolCallDelta: &ToolCallDelta{
+							Index: tc.Index, ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments,
+						},
+					}
+				}
 		}
 	}()
 

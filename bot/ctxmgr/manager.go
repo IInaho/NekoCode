@@ -11,6 +11,7 @@ type Summarizer func(msgs []llm.Message, prevSummary string) (string, error)
 type Manager struct {
 	mu           sync.RWMutex
 	systemPrompt string
+	todoText     string // current todo list, injected into every LLM call
 	messages     []llm.Message
 	summary      string
 	windowSize   int
@@ -71,6 +72,10 @@ func (m *Manager) Build(withTools bool) []llm.Message {
 		out = append(out, llm.Message{Role: "system", Content: m.systemPrompt})
 	}
 
+	if m.todoText != "" {
+		out = append(out, llm.Message{Role: "system", Content: "[任务进度]\n" + m.todoText})
+	}
+
 	if m.summary != "" {
 		out = append(out, llm.Message{
 			Role:    "system",
@@ -106,26 +111,30 @@ func (m *Manager) Build(withTools bool) []llm.Message {
 	validIDs := make(map[string]bool)
 	filtered := make([]llm.Message, 0, len(kept))
 	for _, msg := range kept {
-		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
-			for _, tc := range msg.ToolCalls {
-				if tc.ID != "" {
-					validIDs[tc.ID] = true
+			m := msg
+			if m.Content == "" && m.Role != "system" {
+				m.Content = "."
+			}
+			if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+				for _, tc := range m.ToolCalls {
+					if tc.ID != "" {
+						validIDs[tc.ID] = true
+					}
 				}
 			}
-		}
-		if msg.Role == "tool" {
-			if msg.ToolCallID == "" || !validIDs[msg.ToolCallID] {
-				continue
+			if m.Role == "tool" {
+				if m.ToolCallID == "" || !validIDs[m.ToolCallID] {
+					continue
+				}
 			}
+			filtered = append(filtered, m)
 		}
-		filtered = append(filtered, msg)
-	}
 	out = append(out, filtered...)
 
 	if withTools {
 		out = append(out, llm.Message{
 			Role:    "system",
-			Content: "当用户要求执行操作时，根据任务选择合适的工具：替换/修改文件内容用 edit，搜索文件内容用 grep，查找文件用 glob，读写文件用 filesystem，运行命令用 bash。必须调用工具实际执行，不要只描述。如果用户只是在闲聊，直接回复即可。",
+			Content: "当用户要求执行操作时，根据任务选择合适的工具：替换/修改文件内容用 edit，搜索文件内容用 grep，查找文件用 glob，读文件用 read，写文件用 write，列目录用 list，任务规划用 todo_write，运行命令用 bash，复杂任务委派子 agent 用 task。必须调用工具实际执行，不要只描述。如果用户只是在闲聊，直接回复即可。",
 		})
 	}
 

@@ -1,5 +1,5 @@
+// update.go — tea.Update 主循环消息分发。
 package tui
-
 import (
 	"primusbot/tui/components"
 
@@ -31,17 +31,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		return m, m.handleSpinnerTick(msg)
 
+
 	case doneMsg:
 		return m, m.handleDone(msg)
 
 	case confirmMsg:
 		m.ConfirmBar.SetRequest(&msg.req)
-		m.state = StateConfirming
+		m.state = stateConfirming
 		m.resizeMessages()
 		return m, nil
 
 	case tea.KeyPressMsg:
-		if m.state == StateConfirming {
+		if m.state == stateConfirming {
 			return m.handleConfirmKey(msg)
 		}
 		return m, m.handleKeyPress(msg)

@@ -1,7 +1,6 @@
+// header.go — 顶部标题栏（provider / model / version / tokens）。
 package components
-
 import (
-	"fmt"
 	"strings"
 
 	"primusbot/tui/styles"
@@ -39,7 +38,7 @@ func (h *Header) View() string {
 	dot := styles.BorderStyle.Render(" · ")
 
 	if h.Tokens > 0 {
-		right = fmtTokens(h.Tokens) + dot + right
+		right = styles.FmtTokens(h.Tokens) + dot + right
 	}
 
 	content := left + dot + right
@@ -55,9 +54,3 @@ func (h *Header) View() string {
 	return b.String()
 }
 
-func fmtTokens(n int) string {
-	if n >= 1000 {
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprintf("%d", n)
-}

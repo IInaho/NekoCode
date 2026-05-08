@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"primusbot/bot/tools"
@@ -27,18 +28,15 @@ type ShouldStopFunc func(info StopInfo) bool
 // like Pi's transformContext hook.
 type ContextTransform func(messages []llm.Message) []llm.Message
 
-// StreamCallback receives incremental text and tool call signals during LLM streaming.
+// StreamCallback receives incremental content text during LLM streaming.
 type StreamCallback func(delta string, isToolCall bool)
 
-// TokenStats tracks actual API token usage.
-type TokenStats struct {
-	Prompt      int
-	Completion  int
-	TotalCalls  int
-}
+// ReasoningCallback receives DeepSeek reasoning_content tokens during streaming.
+type ReasoningCallback func(delta string)
 
 type Agent struct {
 	ctxMu                sync.Mutex
+	parentCtx            context.Context
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	ctxMgr               *ctxmgr.Manager
@@ -53,10 +51,12 @@ type Agent struct {
 	shouldStop           ShouldStopFunc
 	transformContext     ContextTransform
 	streamFn             StreamCallback
+	reasoningFn          ReasoningCallback
 	steeringCh           chan string
 	synthesizePrompt     string
-	tokensMu             sync.Mutex
-	tokens               TokenStats
+	tokenPrompt          atomic.Int64
+	tokenCompletion      atomic.Int64
+	tokenCalls           atomic.Int64
 	startTime            time.Time
 }
 
@@ -68,6 +68,7 @@ func New(
 ) *Agent {
 	agentCtx, cancel := context.WithCancel(ctx)
 	return &Agent{
+		parentCtx:        ctx,
 		ctx:              agentCtx,
 		cancel:           cancel,
 		ctxMgr:           ctxMgr,
@@ -82,10 +83,17 @@ func New(
 
 func (a *Agent) SetConfirmFn(fn types.ConfirmFunc) { a.executor.SetConfirmFn(fn) }
 func (a *Agent) SetPhaseFn(fn types.PhaseFunc)     { a.phaseFn = fn; a.executor.SetPhaseFn(fn) }
+func (a *Agent) PhaseFn() types.PhaseFunc          { return a.phaseFn }
+func (a *Agent) WireTodoWrite(fn tools.TodoFunc) {
+	if t, err := a.toolRegistry.Get("todo_write"); err == nil {
+		t.(*tools.TodoWriteTool).SetUpdateFn(fn)
+	}
+}
 func (a *Agent) SetShouldStop(fn ShouldStopFunc)    { a.shouldStop = fn }
 func (a *Agent) SetContextTransform(fn ContextTransform) { a.transformContext = fn }
 func (a *Agent) SetSynthesizePrompt(prompt string)  { a.synthesizePrompt = prompt }
-func (a *Agent) SetStreamFn(fn StreamCallback)       { a.streamFn = fn }
+func (a *Agent) SetStreamFn(fn StreamCallback)             { a.streamFn = fn }
+func (a *Agent) SetReasoningStreamFn(fn ReasoningCallback) { a.reasoningFn = fn }
 
 // getCtx atomically reads the current context (safe for concurrent Steer/Abort).
 func (a *Agent) getCtx() context.Context {
@@ -99,7 +107,7 @@ func (a *Agent) replaceCtx() {
 	a.ctxMu.Lock()
 	defer a.ctxMu.Unlock()
 	a.cancel()
-	a.ctx, a.cancel = context.WithCancel(context.Background())
+	a.ctx, a.cancel = context.WithCancel(a.parentCtx)
 }
 
 // Steer injects a user message mid-loop and interrupts the ongoing LLM call.
@@ -122,29 +130,20 @@ func (a *Agent) Abort() {
 }
 
 func (a *Agent) AddTokens(prompt, completion int) {
-	a.tokensMu.Lock()
-	a.tokens.Prompt += prompt
-	a.tokens.Completion += completion
-	a.tokens.TotalCalls++
-	sumP := a.tokens.Prompt
-	sumC := a.tokens.Completion
-	a.tokensMu.Unlock()
-	writeAgentLog("AddTokens(+%d,+%d) total: p=%d c=%d", prompt, completion, sumP, sumC)
+	a.tokenPrompt.Add(int64(prompt))
+	a.tokenCompletion.Add(int64(completion))
+	a.tokenCalls.Add(1)
+	writeAgentLog("AddTokens(+%d,+%d) total: p=%d c=%d", prompt, completion,
+		a.tokenPrompt.Load(), a.tokenCompletion.Load())
 }
 
 func (a *Agent) ResetTokens() {
-	a.tokensMu.Lock()
-	a.tokens.Prompt = 0
-	a.tokens.Completion = 0
-	a.tokensMu.Unlock()
+	a.tokenPrompt.Store(0)
+	a.tokenCompletion.Store(0)
 }
 
 func (a *Agent) TokenUsage() (prompt, completion int) {
-	a.tokensMu.Lock()
-	p := a.tokens.Prompt
-	c := a.tokens.Completion
-	a.tokensMu.Unlock()
-	return p, c
+	return int(a.tokenPrompt.Load()), int(a.tokenCompletion.Load())
 }
 
 // ContextTokens returns the estimated context size for the current messages.
@@ -163,15 +162,15 @@ func (a *Agent) Duration() time.Duration {
 func (a *Agent) Reset() {
 	a.ctxMu.Lock()
 	if a.ctx.Err() != nil {
-		a.ctx, a.cancel = context.WithCancel(context.Background())
+		a.ctx, a.cancel = context.WithCancel(a.parentCtx)
 	}
 	a.ctxMu.Unlock()
 	a.currentStep = 0
 	a.finished = false
 	a.lastReasoningContent = ""
-	a.tokensMu.Lock()
-	a.tokens = TokenStats{}
-	a.tokensMu.Unlock()
+	a.tokenPrompt.Store(0)
+	a.tokenCompletion.Store(0)
+	a.tokenCalls.Store(0)
 	a.startTime = time.Now()
 }
 

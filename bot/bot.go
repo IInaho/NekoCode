@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "embed"
 	"primusbot/bot/agent"
+	"primusbot/bot/agent/subagent"
 	"primusbot/bot/extensions"
 	"primusbot/bot/tools"
 	"primusbot/bot/types"
@@ -31,15 +33,15 @@ func New(exts ...extensions.Extension) *Bot {
 
 	cfg, _ := LoadConfig()
 
-	// Inject project directory tree so the LLM has awareness of the codebase upfront.
 	systemPrompt := SystemPrompt
-	if cwd, err := os.Getwd(); err == nil {
-		if tree := buildDirectoryTree(cwd); tree != "" {
-			systemPrompt += tree
-		}
-	}
 
 	ctxMgr := ctxmgr.New(systemPrompt)
+
+	// Inject environment as <system-reminder> user message (not system prompt)
+	// so the system prompt stays lean for prompt caching.
+	if cwd, err := os.Getwd(); err == nil {
+		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\n当前工作目录: %s\n用 list/glob 探索目录结构，需要时再 read。\n</system-reminder>", cwd))
+	}
 	ctxMgr.SetTokenBudget(cfg.TokenBudget)
 
 	var llmClient llm.LLM
@@ -94,12 +96,43 @@ func New(exts ...extensions.Extension) *Bot {
 		ag:        agent.New(ctx, ctxMgr, llmClient, toolRegistry),
 	}
 
+	// Sub-agent engine uses a separate LLM client with thinking disabled.
+	// Sub-agents execute — they don't need extended reasoning.
+	subLLM := cloneLLM(llmClient, cfg)
+	subLLM.SetDisableThinking(true)
+	engine := subagent.NewEngine(subLLM, toolRegistry)
+	names := make([]string, 0)
+	for _, a := range subagent.List() {
+		names = append(names, a.Name)
+	}
+	if t, err := toolRegistry.Get("task"); err == nil {
+		t.(*tools.TaskTool).Wire(func(ctx context.Context, prompt, agentType string) (string, error) {
+			at, ok := subagent.Get(agentType)
+			if !ok {
+				return "", fmt.Errorf("未知的子 agent 类型: %s（可用: %s）", agentType, strings.Join(names, ", "))
+			}
+			cwd, _ := os.Getwd()
+			cfg := subagent.RunConfig{
+				Prompt:    prompt,
+				AgentType: at,
+				Cwd:       cwd,
+				DisableThinking: true, // subagents execute, don't ponder
+			}
+			if fn := b.ag.PhaseFn(); fn != nil {
+				cfg.OnPhase = func(p string) { fn(at.Name + " · " + p) }
+			}
+			cfg.AddTokens = b.ag.AddTokens
+			return engine.Run(ctx, cfg)
+		}, names)
+	}
+
 	// Circuit breaker: force synthesis when searching without fetching.
 	b.ag.SetShouldStop(func(info agent.StopInfo) bool {
 		return info.State.SearchCount >= 4 && info.State.FetchCount == 0
 	})
 
-	// Inject "synthesize now" when context accumulates many tool results.
+	// Prompt the agent to make progress when accumulating many tool results.
+	// Raised from 6 to 20 to accommodate subagent (task) workflows.
 	b.ag.SetContextTransform(func(msgs []llm.Message) []llm.Message {
 		toolResults := 0
 		for _, m := range msgs {
@@ -107,10 +140,10 @@ func New(exts ...extensions.Extension) *Bot {
 				toolResults++
 			}
 		}
-		if toolResults > 6 {
+		if toolResults > 20 {
 			msgs = append(msgs, llm.Message{
-				Role: "user",
-				Content: "【系统指令】已经有 " + strconv.Itoa(toolResults) + " 个工具结果了。现在直接给出你的分析或答案，不要再调用任何工具。",
+				Role:    "user",
+				Content: "【系统指令】已经有 " + strconv.Itoa(toolResults) + " 个工具结果了。检查是否有未完成的子任务——如果有，继续调用 task 执行。如果全部完成，调用 task(verify) 验证，然后汇报结果。",
 			})
 		}
 		return msgs
@@ -153,13 +186,22 @@ func (b *Bot) SetStreamFn(fn func(delta string)) {
 	b.ag.SetStreamFn(func(delta string, _ bool) { fn(delta) })
 }
 
+func (b *Bot) SetReasoningStreamFn(fn func(delta string)) {
+	b.ag.SetReasoningStreamFn(fn)
+}
+
 func (b *Bot) SetConfirmFn(fn types.ConfirmFunc) {
 	b.ag.SetConfirmFn(fn)
+}
+func (b *Bot) WireTodoWrite(fn tools.TodoFunc) {
+	b.ag.WireTodoWrite(fn)
 }
 
 func (b *Bot) SetPhaseFn(fn types.PhaseFunc) {
 	b.ag.SetPhaseFn(fn)
 }
+
+func (b *Bot) SetCtxTodos(text string)   { b.ctxMgr.SetTodos(text) }
 
 func (b *Bot) SummarizeIfNeeded() {
 	if b.ctxMgr.NeedsSummarization() {
@@ -213,4 +255,20 @@ func (b *Bot) Duration() string {
 
 func (b *Bot) CommandNames() []string {
 	return b.cmdParser.Commands()
+}
+
+// cloneLLM creates a copy of the LLM client with the same provider/model config.
+func cloneLLM(client llm.LLM, cfg *Config) llm.LLM {
+	switch cfg.Provider {
+	case "anthropic":
+		c := llm.NewAnthropic(cfg.APIKey, cfg.Model)
+		c.SetBaseURL(cfg.BaseURL)
+		return c
+	case "glm":
+		c := llm.NewGLM(cfg.APIKey, cfg.BaseURL, cfg.Model)
+		return c
+	default:
+		c := llm.NewOpenAI(cfg.APIKey, cfg.BaseURL, cfg.Model)
+		return c
+	}
 }

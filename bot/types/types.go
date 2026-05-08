@@ -13,3 +13,12 @@ type ConfirmRequest struct {
 type ConfirmFunc func(req ConfirmRequest) bool
 
 type PhaseFunc func(phase string)
+
+// Phase constants — emitted by agent, displayed by TUI status line.
+const (
+	PhaseReady     = "Ready"
+	PhaseWaiting   = "Waiting"
+	PhaseThinking  = "Thinking"
+	PhaseReasoning = "Reasoning"
+	PhaseRunning   = "Running"
+)

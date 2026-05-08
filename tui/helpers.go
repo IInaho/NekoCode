@@ -1,12 +1,14 @@
+// helpers.go — 工具参数/结果格式化辅助函数。
 package tui
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	"primusbot/bot/tools"
 )
 
-// formatBriefArgs extracts key identifying args for a clean one-line tool display.
 func formatBriefArgs(toolName, toolArgs string) string {
 	parse := func(s string) map[string]string {
 		m := make(map[string]string)
@@ -21,51 +23,64 @@ func formatBriefArgs(toolName, toolArgs string) string {
 	args := parse(toolArgs)
 
 	switch toolName {
-	case "filesystem":
-		op := args["operation"]
-		path := args["path"]
-		if op != "" && path != "" {
-			return op + " " + path
-		}
-		return path
+	case "read", "write", "list":
+		return args["path"]
 	case "edit":
 		return args["path"]
 	case "bash":
 		cmd := args["command"]
-		if len(cmd) > 50 {
-			cmd = tools.TruncateByRune(cmd, 47)
+		if len(cmd) > 60 {
+			cmd = tools.TruncateByRune(cmd, 57)
 		}
 		return cmd
 	case "glob":
 		return args["pattern"]
 	case "grep":
-		pat := args["pattern"]
 		p := args["path"]
 		if p != "" {
-			return pat + " " + p
+			return args["pattern"] + " " + p
 		}
-		return pat
+		return args["pattern"]
+	case "web_search", "web_fetch":
+		q := args["query"]
+		if q == "" {
+			q = args["url"]
+		}
+		return tools.TruncateByRune(q, 60)
+	case "todo_write":
+		return formatTodos(args["todos"])
+	case "task":
+		t := args["subagent_type"]
+		if t == "" {
+			t = "executor"
+		}
+		if d := args["description"]; d != "" {
+			return t + " \u00b7 " + d
+		}
+		p := strings.SplitN(args["prompt"], "\n", 2)[0]
+		p = strings.Trim(p, " \"")
+		return t + " \u00b7 " + tools.TruncateByRune(p, 30)
 	default:
 		for _, v := range args {
-			return tools.TruncateByRune(v, 27)
+			return tools.TruncateByRune(v, 50)
 		}
 		return ""
 	}
 }
 
-// --- suggestions ---
-
-func (m *Model) refreshSuggestions() {
-	m.Suggestions.Refresh(m.Input.Value(), m.Bot.CommandNames())
-}
-
-func (m *Model) acceptSuggestion() {
-	if val := m.Suggestions.Accept(); val != "" {
-		m.Input.SetValue(val)
-		m.Input.SetCursorEnd()
+func formatTodos(raw string) string {
+	if raw == "" {
+		return ""
 	}
-}
-
-func (m *Model) cycleSuggestion(delta int) {
-	m.Suggestions.Cycle(delta)
+	var items []struct {
+		Content string `json:"content"`
+		Status  string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return ""
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d items", len(items))
 }

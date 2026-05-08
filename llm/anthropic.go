@@ -16,6 +16,7 @@ type Anthropic struct {
 	BaseURL     string
 	Model       string
 	maxTokens   int
+	disableThinking bool
 	temperature float64
 }
 
@@ -29,8 +30,11 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 	}
 }
 
-func (a *Anthropic) SetAPIKey(apiKey string) { a.APIKey = apiKey }
-func (a *Anthropic) SetBaseURL(url string)   { a.BaseURL = url }
+func (a *Anthropic) SetAPIKey(apiKey string)         { a.APIKey = apiKey }
+func (a *Anthropic) SetBaseURL(url string)           { a.BaseURL = url }
+func (a *Anthropic) SetMaxTokens(n int)              { a.maxTokens = n }
+func (a *Anthropic) MaxTokens() int                   { return a.maxTokens }
+func (a *Anthropic) SetDisableThinking(disable bool) { a.disableThinking = disable }
 
 type anthropicTool struct {
 	Name        string      `json:"name"`
@@ -56,6 +60,7 @@ type anthropicRequest struct {
 	Messages    []anthropicMsg  `json:"messages"`
 	Tools       []anthropicTool `json:"tools,omitempty"`
 	Stream      bool            `json:"stream"`
+	Thinking    interface{}     `json:"thinking,omitempty"`
 }
 
 type anthropicMsg struct {
@@ -159,7 +164,7 @@ func toAnthropicMessages(messages []Message) ([]anthropicMsg, string) {
 
 func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream bool) (*anthropicRequest, error) {
 	anthropicMsgs, systemPrompt := toAnthropicMessages(messages)
-	return &anthropicRequest{
+	req := &anthropicRequest{
 		Model:       a.Model,
 		MaxTokens:   a.maxTokens,
 		Temperature: a.temperature,
@@ -167,7 +172,11 @@ func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream boo
 		Messages:    anthropicMsgs,
 		Tools:       toAnthropicTools(tools),
 		Stream:      stream,
-	}, nil
+	}
+	if a.disableThinking {
+		req.Thinking = map[string]string{"type": "disabled"}
+	}
+	return req, nil
 }
 
 func (a *Anthropic) Chat(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {

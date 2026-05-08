@@ -1,18 +1,21 @@
+// phase.go — 处理阶段常量 + setPhase 状态切换。
 package tui
+
+import "primusbot/bot/types"
 
 // Processing phases displayed in the status line during agent execution.
 const (
-	PhaseReady     = "Ready"
-	PhaseThinking  = "Thinking"
-	PhaseReasoning = "Reasoning"
-	PhaseExecuting = "Running"
+	phaseSteer = "Processing new input..."
+	PhaseReady     = types.PhaseReady
+	PhaseWaiting   = types.PhaseWaiting
+	PhaseThinking  = types.PhaseThinking
+	PhaseReasoning = types.PhaseReasoning
+	PhaseRunning   = types.PhaseRunning
 )
 
 // setPhase is the single entry point for changing the processing phase.
 func (m *Model) setPhase(p string) {
-	// Don't let the agent override BTW feedback with "Thinking".
-	// "Processing new input..." persists until agent transitions to Reasoning or Running.
-	if m.processingPhase == "Processing new input..." && p == PhaseThinking {
+	if m.processingPhase == phaseSteer && p == PhaseWaiting {
 		return
 	}
 	m.processingPhase = p

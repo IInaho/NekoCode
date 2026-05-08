@@ -59,9 +59,16 @@ func (m *Manager) AddToolResultsBatch(results []llm.Message) {
 	}
 }
 
+func (m *Manager) SetTodos(text string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.todoText = text
+}
+
 func (m *Manager) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages = make([]llm.Message, 0)
 	m.summary = ""
+	m.todoText = ""
 }

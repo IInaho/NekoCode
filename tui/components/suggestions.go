@@ -1,5 +1,5 @@
+// suggestions.go — 底部命令建议栏。
 package components
-
 import (
 	"strings"
 

@@ -10,34 +10,18 @@ import (
 
 // Box-drawing character set. Initialized by init() based on terminal capabilities.
 var (
-	TopLeft     = "╭"
-	TopRight    = "╮"
-	BottomLeft  = "╰"
-	BottomRight = "╯"
 	Vertical    = "│"
 	Horizontal  = "─"
-	LeftTee     = "├"
-	RightTee    = "┤"
 	HeavyVert   = "┃"
-	Bullet      = "•"
-	Fisheye     = "◉"
 )
 
 func init() {
 	runewidth.DefaultCondition.EastAsianWidth = true
 
 	if !supportsUnicode() {
-		TopLeft = "+"
-		TopRight = "+"
-		BottomLeft = "+"
-		BottomRight = "+"
 		Vertical = "|"
 		Horizontal = "-"
-		LeftTee = "+"
-		RightTee = "+"
 		HeavyVert = "|"
-		Bullet = "*"
-		Fisheye = "o"
 	}
 }
 

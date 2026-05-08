@@ -12,8 +12,8 @@ type Item interface {
 }
 
 type renderedItem struct {
-	content string
-	height  int
+	lines  []string
+	height int
 }
 
 type List struct {
@@ -24,15 +24,19 @@ type List struct {
 	offsetIdx  int
 	offsetLine int
 
-	cache    map[int]renderedItem
-	cacheMu  sync.RWMutex
-	cacheWid int
+	cache       map[int]renderedItem
+	cacheMu     sync.RWMutex
+	cacheWid    int
+	totalHeight int  // cached total content height, -1 if dirty
+	pixelsAbove int  // cumulative pixels scrolled above viewport, -1 if dirty
 }
 
 func NewList(items ...Item) *List {
 	return &List{
-		items: items,
-		cache: make(map[int]renderedItem),
+		items:       items,
+		cache:       make(map[int]renderedItem),
+		totalHeight: -1,
+		pixelsAbove: -1,
 	}
 }
 
@@ -47,16 +51,21 @@ func (l *List) Width() int  { return l.width }
 func (l *List) Height() int { return l.height }
 func (l *List) Len() int    { return len(l.items) }
 
-func (l *List) Items() []Item        { return l.items }
+func (l *List) Items() []Item { return l.items }
+
 func (l *List) SetItems(items ...Item) {
 	l.items = items
 	l.offsetIdx = 0
 	l.offsetLine = 0
+	l.totalHeight = -1
+	l.pixelsAbove = 0
 	l.clearCache()
 }
 
 func (l *List) AppendItems(items ...Item) {
 	l.items = append(l.items, items...)
+	l.totalHeight = -1
+	l.pixelsAbove = -1
 }
 
 func (l *List) getItem(idx int) renderedItem {
@@ -76,9 +85,10 @@ func (l *List) getItem(idx int) renderedItem {
 	item := l.items[idx]
 	content := item.Render(l.width)
 	content = strings.TrimRight(content, "\n")
-	height := strings.Count(content, "\n") + 1
+	lines := strings.Split(content, "\n")
+	height := len(lines)
 
-	ri := renderedItem{content: content, height: height}
+	ri := renderedItem{lines: lines, height: height}
 
 	l.cacheMu.Lock()
 	if l.cacheWid != l.width {
@@ -94,62 +104,103 @@ func (l *List) getItem(idx int) renderedItem {
 func (l *List) clearCache() {
 	l.cacheMu.Lock()
 	l.cache = make(map[int]renderedItem)
+	l.totalHeight = -1
+	l.pixelsAbove = -1
 	l.cacheMu.Unlock()
 }
 
 func (l *List) InvalidateItem(idx int) {
 	l.cacheMu.Lock()
+	old, hadOld := l.cache[idx]
 	delete(l.cache, idx)
 	l.cacheMu.Unlock()
+
+	if hadOld {
+		newItem := l.getItem(idx)
+		if l.totalHeight >= 0 {
+			l.totalHeight += newItem.height - old.height
+		}
+		// Only invalidate the scroll offset cache if the changed item is above
+		// the current viewport — otherwise pixelsAbove is unaffected.
+		if idx < l.offsetIdx && l.pixelsAbove >= 0 {
+			l.pixelsAbove += newItem.height - old.height
+		}
+	} else {
+		l.totalHeight = -1
+		l.pixelsAbove = -1
+	}
 }
 
 func (l *List) Invalidate() { l.clearCache() }
+
+// recomputePixelsAbove rebuilds pixelsAbove from offsetIdx/offsetLine.
+// Called after scroll operations, not per-frame.
+func (l *List) recomputePixelsAbove() {
+	l.pixelsAbove = l.offsetLine
+	for i := 0; i < l.offsetIdx; i++ {
+		it := l.getItem(i)
+		l.pixelsAbove += it.height
+		if l.gap > 0 {
+			l.pixelsAbove += l.gap
+		}
+	}
+}
 
 func (l *List) AtBottom() bool {
 	if len(l.items) == 0 {
 		return true
 	}
-
-	var totalHeight int
-	for idx := l.offsetIdx; idx < len(l.items); idx++ {
-		if totalHeight > l.height {
-			return false
-		}
-		itemHeight := l.items[idx].Height(l.width)
-		if l.gap > 0 && idx > l.offsetIdx {
-			itemHeight += l.gap
-		}
-		totalHeight += itemHeight
+	th := l.TotalContentHeight()
+	if th <= l.height {
+		return true
 	}
-
-	return totalHeight-l.offsetLine <= l.height
+	if l.pixelsAbove < 0 {
+		l.recomputePixelsAbove()
+	}
+	return l.pixelsAbove+l.height >= th
 }
 
 func (l *List) ScrollToTop() {
 	l.offsetIdx = 0
 	l.offsetLine = 0
+	l.pixelsAbove = 0
 }
 
 func (l *List) ScrollToBottom() {
 	if len(l.items) == 0 {
 		return
 	}
-
-	var totalHeight int
-	var idx int
-	for idx = len(l.items) - 1; idx >= 0; idx-- {
-		itemHeight := l.items[idx].Height(l.width)
+	th := l.TotalContentHeight()
+	if th <= l.height {
+		l.offsetIdx = 0
+		l.offsetLine = 0
+		l.pixelsAbove = 0
+		return
+	}
+	remaining := l.height
+	idx := len(l.items) - 1
+	for idx >= 0 && remaining > 0 {
+		it := l.getItem(idx)
+		h := it.height
 		if l.gap > 0 && idx < len(l.items)-1 {
-			itemHeight += l.gap
+			h += l.gap
 		}
-		totalHeight += itemHeight
-		if totalHeight > l.height {
-			break
+		remaining -= h
+		if remaining >= 0 {
+			idx--
 		}
 	}
-
 	l.offsetIdx = max(idx, 0)
-	l.offsetLine = max(totalHeight-l.height, 0)
+	above := 0
+	for i := 0; i < l.offsetIdx; i++ {
+		it := l.getItem(i)
+		above += it.height
+		if l.gap > 0 {
+			above += l.gap
+		}
+	}
+	l.offsetLine = max(th-l.height-above, 0)
+	l.pixelsAbove = above + l.offsetLine
 }
 
 func (l *List) ScrollBy(lines int) {
@@ -177,13 +228,20 @@ func (l *List) ScrollBy(lines int) {
 			}
 			currentItem = l.getItem(l.offsetIdx)
 		}
+
+		// pixelsAbove tracks cumulative scroll; lines already includes any consumed gaps.
+		l.pixelsAbove += lines
+		th := l.TotalContentHeight()
+		if th > l.height && l.pixelsAbove > th-l.height {
+			l.pixelsAbove = th - l.height
+		}
 	} else {
 		l.offsetLine += lines
 		for l.offsetLine < 0 {
 			l.offsetIdx--
 			if l.offsetIdx < 0 {
 				l.ScrollToTop()
-				break
+				return
 			}
 			prevItem := l.getItem(l.offsetIdx)
 			totalHeight := prevItem.height
@@ -192,38 +250,14 @@ func (l *List) ScrollBy(lines int) {
 			}
 			l.offsetLine += totalHeight
 		}
+
+		l.pixelsAbove += lines
+		if l.pixelsAbove < 0 {
+			l.pixelsAbove = 0
+		}
 	}
 }
 
-func (l *List) VisibleItemIndices() (startIdx, endIdx int) {
-	if len(l.items) == 0 {
-		return 0, 0
-	}
-
-	startIdx = l.offsetIdx
-	currentIdx := startIdx
-	visibleHeight := -l.offsetLine
-
-	for currentIdx < len(l.items) {
-		item := l.getItem(currentIdx)
-		visibleHeight += item.height
-		if l.gap > 0 {
-			visibleHeight += l.gap
-		}
-
-		if visibleHeight >= l.height {
-			break
-		}
-		currentIdx++
-	}
-
-	endIdx = currentIdx
-	if endIdx >= len(l.items) {
-		endIdx = len(l.items) - 1
-	}
-
-	return startIdx, endIdx
-}
 
 func (l *List) Render() string {
 	if len(l.items) == 0 {
@@ -237,8 +271,8 @@ func (l *List) Render() string {
 
 	for linesNeeded > 0 && currentIdx < len(l.items) {
 		item := l.getItem(currentIdx)
-		itemLines := strings.Split(item.content, "\n")
-		itemHeight := len(itemLines)
+		itemLines := item.lines
+		itemHeight := item.height
 
 		if currentOffset >= 0 && currentOffset < itemHeight {
 			startLine := currentOffset
@@ -272,17 +306,21 @@ func (l *List) Render() string {
 }
 
 func (l *List) TotalContentHeight() int {
-	var total int
-	for i := 0; i < len(l.items); i++ {
-		item := l.getItem(i)
-		total += item.height
-		if l.gap > 0 && i > 0 {
-			total += l.gap
+	if l.totalHeight < 0 {
+		var total int
+		for i := 0; i < len(l.items); i++ {
+			item := l.getItem(i)
+			total += item.height
+			if l.gap > 0 && i > 0 {
+				total += l.gap
+			}
 		}
+		l.totalHeight = total
 	}
-	return total
+	return l.totalHeight
 }
 
+// ScrollPercent returns the scroll position as a fraction [0, 1].
 func (l *List) ScrollPercent() float64 {
 	if len(l.items) == 0 {
 		return 0
@@ -292,20 +330,14 @@ func (l *List) ScrollPercent() float64 {
 		return 0
 	}
 
-	var offsetPixels int
-	for i := 0; i < l.offsetIdx; i++ {
-		item := l.getItem(i)
-		offsetPixels += item.height
-		if l.gap > 0 {
-			offsetPixels += l.gap
-		}
-	}
-	offsetPixels += l.offsetLine
-
 	maxOffset := totalHeight - l.height
 	if maxOffset <= 0 {
 		return 0
 	}
 
-	return float64(offsetPixels) / float64(maxOffset)
+	if l.pixelsAbove < 0 {
+		l.recomputePixelsAbove()
+	}
+
+	return float64(l.pixelsAbove) / float64(maxOffset)
 }

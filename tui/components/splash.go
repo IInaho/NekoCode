@@ -10,6 +10,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 )
+const inputReserved = 7 // Input.Height()=5 + 2 separator lines in View()
 
 type Splash struct {
 	width   int
@@ -67,7 +68,7 @@ func (s *Splash) View() string {
 	contentH := len(lines)
 
 	// Input.Height()=5 + 2 separator lines in tui.go View().
-	reserved := 7
+	reserved := inputReserved
 	topPad := max(0, (h-reserved-contentH)/2)
 
 	var b strings.Builder

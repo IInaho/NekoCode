@@ -1,8 +1,12 @@
+// messages.go — Messages 容器：管理消息列表、处理中状态、流式内容分发。
 package components
 
 import (
 	"sync"
 
+	"primusbot/tui/components/block"
+	"primusbot/tui/components/processing"
+	"primusbot/tui/components/message"
 	"primusbot/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
@@ -13,7 +17,7 @@ type Messages struct {
 	Processing     bool
 	Follow         bool
 	sty            *styles.Styles
-	processingItem *ProcessingItem
+	processingItem *processing.ProcessingItem
 	mu             sync.Mutex
 }
 
@@ -33,17 +37,17 @@ func (m *Messages) SetSize(width, height int) {
 	m.List.SetSize(width, height)
 }
 
-func (m *Messages) SetProcessing(processing bool) {
+func (m *Messages) SetProcessing(on bool) {
 	m.mu.Lock()
-	m.Processing = processing
-	if processing && m.processingItem == nil {
-		m.processingItem = NewProcessingItem(m.sty)
+	m.Processing = on
+	if on && m.processingItem == nil {
+		m.processingItem = processing.NewProcessingItem(m.sty)
 		m.AppendItems(m.processingItem)
-	} else if !processing && m.processingItem != nil {
+	} else if !on && m.processingItem != nil {
 		items := m.Items()
 		m.SetItems()
 		for _, item := range items {
-			if _, ok := item.(*ProcessingItem); !ok {
+			if _, ok := item.(*processing.ProcessingItem); !ok {
 				m.AppendItems(item)
 			}
 		}
@@ -52,11 +56,11 @@ func (m *Messages) SetProcessing(processing bool) {
 	m.mu.Unlock()
 }
 
-
 func (m *Messages) SetSpinnerView(view string) {
 	m.mu.Lock()
 	if m.processingItem != nil {
 		m.processingItem.SetSpinnerView(view)
+		m.invalidateProcessing()
 	}
 	m.mu.Unlock()
 }
@@ -65,30 +69,135 @@ func (m *Messages) SetProcessingStatus(text string) {
 	m.mu.Lock()
 	if m.processingItem != nil {
 		m.processingItem.SetStatusText(text)
-		m.Invalidate()
+		m.invalidateProcessing()
 	}
 	m.mu.Unlock()
 }
 
-func (m *Messages) SetProcessingTokens(prompt, completion int) {
-	m.mu.Lock()
-	if m.processingItem != nil {
-		m.processingItem.SetTokens(prompt, completion)
-	}
-	m.mu.Unlock()
-}
 
-func (m *Messages) SetBlocks(blocks []ContentBlock) {
+func (m *Messages) SetBlocks(blocks []block.ContentBlock) {
 	m.mu.Lock()
 	if m.processingItem != nil {
 		m.processingItem.SetBlocks(blocks)
-		m.Invalidate()
+		m.invalidateProcessing()
 	}
 	m.mu.Unlock()
 }
 
-func (m *Messages) AddMessage(msg ChatMessage) {
-	item := msg.ToMessageItem(m.sty)
+func (m *Messages) SetTodos(text string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.SetTodos(text)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) ProcessStreamText(delta string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.AppendStreamText(delta)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) ProcessReasoningText(delta string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.AppendReasoningText(delta)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) ProcessToolBlock(b block.ContentBlock) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.AddToolBlock(b)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) AddDiffBlock(content string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.AddDiffBlock(content)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) AddThinkBlock(content string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.AddThinkBlock(content)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) UpdateProcessing(fn func(p *processing.ProcessingItem)) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		fn(m.processingItem)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) ClearProcessing() {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.Clear()
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Messages) ProcessingBlocks() []block.ContentBlock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.processingItem != nil {
+		return m.processingItem.Blocks()
+	}
+	return nil
+}
+
+func (m *Messages) invalidateProcessing() {
+	idx := len(m.Items()) - 1
+	if idx >= 0 {
+		m.InvalidateItem(idx)
+	}
+}
+
+func (m *Messages) AddMessage(msg message.ChatMessage) {
+	var item Item
+	switch msg.Role {
+	case "user":
+		item = message.NewUserMessageItem(m.sty, msg.Content)
+	case "assistant":
+		a := message.NewAssistantMessageItem(m.sty, msg.Content)
+		if msg.RenderedContent != "" {
+			a.SetRenderedContent(msg.RenderedContent)
+		}
+		a.SetBlocks(msg.Blocks)
+		if msg.Footer != "" {
+			a.SetFooter(msg.Footer)
+		}
+		item = a
+	case "system":
+		s := message.NewSystemMessageItem(m.sty, msg.Content)
+		if msg.RenderedContent != "" {
+			s.SetRenderedContent(msg.RenderedContent)
+		}
+		item = s
+	case "error":
+		item = message.NewErrorMessageItem(m.sty, msg.Content)
+	default:
+		item = message.NewUserMessageItem(m.sty, msg.Content)
+	}
 	m.AppendItems(item)
 	if m.Follow {
 		m.ScrollToBottom()
@@ -109,23 +218,24 @@ func (m *Messages) GotoBottom() {
 func (m *Messages) ToggleLastAssistant() {
 	items := m.Items()
 	for i := len(items) - 1; i >= 0; i-- {
-		a, ok := items[i].(*AssistantMessageItem)
-		if !ok || len(a.blocks) == 0 {
+		a, ok := items[i].(*message.AssistantMessageItem)
+		if !ok || len(a.Blocks()) == 0 {
 			continue
 		}
-		// If any tool block is collapsed, expand all; otherwise collapse all.
+		blks := a.Blocks()
 		expand := false
-		for _, b := range a.blocks {
-			if b.Type == BlockToolCall && b.Collapsed {
+		for _, b := range blks {
+			if b.Type == block.BlockTool && b.ToolName == "edit" && b.Content != "" && b.Collapsed {
 				expand = true
 				break
 			}
 		}
-		for j := range a.blocks {
-			if a.blocks[j].Type == BlockToolCall {
-				a.blocks[j].Collapsed = !expand
+		for j := range blks {
+			if blks[j].Type == block.BlockTool && blks[j].ToolName == "edit" && blks[j].Content != "" {
+				blks[j].Collapsed = !expand
 			}
 		}
+		a.SetBlocks(blks)
 		m.Invalidate()
 		return
 	}
@@ -162,6 +272,3 @@ func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Messages) View() string {
-	return m.Render()
-}

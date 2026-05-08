@@ -24,6 +24,7 @@ type stepState struct {
 	RetryCount     int
 	SearchCount    int
 	FetchCount     int
+	lowOutputTurns int // consecutive turns with minimal output
 }
 
 func (a *Agent) Run(input string, callback RunCallback) *RunResult {
@@ -96,26 +97,35 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 	return &RunResult{FinalOutput: output, Steps: a.currentStep}
 }
 
-func (a *Agent) collectCalls(reasoning *ReasoningResult) []ToolCallItem {
+func (a *Agent) collectCalls(reasoning *ReasoningResult) []tools.ToolCallItem {
 	if len(reasoning.ToolCalls) > 0 {
-		return reasoning.ToolCalls
-	}
-	if reasoning.Action == ActionExecuteTool && reasoning.ActionInput != "" {
-		name, args, err := tools.ParseCall(reasoning.ActionInput)
-		if err != nil {
-			return nil
+		out := make([]tools.ToolCallItem, len(reasoning.ToolCalls))
+		for i, tc := range reasoning.ToolCalls {
+			out[i] = tools.ToolCallItem{ID: tc.ID, Name: tc.Name, Args: tc.Args}
 		}
-		return []ToolCallItem{{ID: reasoning.ToolCallID, Name: name, Args: args}}
+		return out
 	}
 	return nil
 }
 
-func (a *Agent) executeAndFeedback(calls []ToolCallItem, reasoning *ReasoningResult, state *stepState, callback RunCallback) *stepState {
+func (a *Agent) executeAndFeedback(calls []tools.ToolCallItem, reasoning *ReasoningResult, state *stepState, callback RunCallback) *stepState {
 	// Surface LLM thinking text between tool calls.
 	if reasoning.TextContent != "" && callback != nil {
 		callback(a.currentStep, reasoning.Thought, "think", "", "", reasoning.TextContent, 0, 0)
 	}
 
+
+	// Signal tool starts before execution so slow tools (task/subagent)
+	// display immediately in the TUI rather than after they complete.
+	if callback != nil {
+		for i, c := range calls {
+			toolArgs := ""
+			if i < len(calls) {
+				toolArgs = formatArgs(calls[i].Args)
+			}
+			callback(a.currentStep, reasoning.Thought, "tool_start", c.Name, toolArgs, "", i+1, len(calls))
+		}
+	}
 	results := a.executor.ExecuteBatch(a.getCtx(), calls)
 
 	msgs := make([]llm.Message, 0, len(results))
@@ -139,7 +149,8 @@ func (a *Agent) executeAndFeedback(calls []ToolCallItem, reasoning *ReasoningRes
 		a.ctxMgr.AddToolResultsBatch(msgs)
 	}
 
-	result := &ActionResult{Thought: reasoning.Thought, Action: ActionExecuteTool, IsFinal: false}
+	done := a.detectDiminishingReturns(state, results, calls)
+	result := &ActionResult{Thought: reasoning.Thought, Action: ActionExecuteTool, IsFinal: done}
 	newState, _, _ := a.Feedback(state, result)
 
 	for _, tc := range calls {
@@ -182,7 +193,7 @@ func (a *Agent) drainSteering() {
 func (a *Agent) Feedback(state *stepState, result *ActionResult) (*stepState, bool, bool) {
 	a.currentStep++
 	shouldStop := result.IsFinal || a.currentStep >= a.maxIterations
-	shouldRetry := result.ShouldRetry && a.currentStep < a.maxIterations
+	shouldRetry := false
 
 	newState := &stepState{
 		Input:          state.Input,
@@ -191,9 +202,40 @@ func (a *Agent) Feedback(state *stepState, result *ActionResult) (*stepState, bo
 		Success:        result.Error == "",
 		SearchCount:    state.SearchCount,
 		FetchCount:     state.FetchCount,
+		lowOutputTurns: state.lowOutputTurns,
 	}
-	if result.Error != "" && result.ShouldRetry {
-		newState.RetryCount = state.RetryCount + 1
-	}
+
 	return newState, shouldRetry, shouldStop
+}
+
+// detectDiminishingReturns checks if tool output is stagnating.
+// Called from executeAndFeedback after collecting results.
+func (a *Agent) detectDiminishingReturns(state *stepState, results []tools.ToolCallResult, calls []tools.ToolCallItem) bool {
+	// Skip coordination tools (task, todo_write) — their output is naturally short.
+	isCoord := func(name string) bool { return name == "task" || name == "todo_write" }
+
+	totalOut := 0
+	hasContent := false
+	for i, r := range results {
+		if isCoord(calls[i].Name) {
+			continue
+		}
+		hasContent = true
+		totalOut += len(r.Output)
+	}
+	if !hasContent {
+		return false // all tools were coordination — don't count as low output
+	}
+
+	const minOutput = 200
+	if totalOut < minOutput {
+		state.lowOutputTurns++
+		if state.lowOutputTurns >= 3 {
+			writeAgentLog("Feedback: stop — 3 consecutive low-output turns (<%d chars)", minOutput)
+			return true
+		}
+	} else {
+		state.lowOutputTurns = 0
+	}
+	return false
 }

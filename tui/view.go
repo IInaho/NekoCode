@@ -1,5 +1,5 @@
+// view.go — tea.View 视图布局组装。
 package tui
-
 import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -17,15 +17,13 @@ func (m *Model) View() tea.View {
 	} else {
 		parts = append(parts, m.Header.View())
 
-		// Update scrollbar state from Messages list.
 		m.Scrollbar.Update(
 			m.Messages.TotalContentHeight(),
 			m.Messages.Height(),
 			m.Messages.ScrollPercent(),
 		)
 
-		// Messages + Scrollbar as independent horizontal pair.
-		msgView := lipgloss.NewStyle().Width(m.Width - 1).Render(m.Messages.View())
+		msgView := lipgloss.NewStyle().Width(m.Width - 1).Render(m.Messages.Render())
 		barView := m.Scrollbar.View()
 		row := msgView
 		if barView != "" {
@@ -34,7 +32,7 @@ func (m *Model) View() tea.View {
 		parts = append(parts, row)
 	}
 
-	if m.state == StateConfirming {
+	if m.state == stateConfirming {
 		if bar := m.ConfirmBar.View(m.Width); bar != "" {
 			parts = append(parts, bar)
 		}

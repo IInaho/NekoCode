@@ -1,51 +1,19 @@
+// model.go — Model 结构体 + 初始化 + 状态切换。
 package tui
 
 import (
+	"fmt"
+	"strings"
+	"time"
+
+	"primusbot/bot/tools"
 	"primusbot/bot/types"
 	"primusbot/tui/components"
 	"primusbot/tui/styles"
-	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 )
-
-// BotInterface is the contract any bot implementation must satisfy for the TUI.
-type BotInterface interface {
-	RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string, batchIdx, batchTotal int)) (string, error)
-	ExecuteCommand(input string) (string, bool)
-	TokenUsage() (prompt, completion int)
-	ContextTokens() int
-	Duration() string
-	CommandNames() []string
-	SetConfirmFn(types.ConfirmFunc)
-	SetPhaseFn(types.PhaseFunc)
-	Steer(msg string)
-	Abort()
-	SetStreamFn(fn func(delta string))
-	Provider() string
-	Model() string
-}
-
-type ChatState int
-
-const (
-	StateReady ChatState = iota
-	StateProcessing
-	StateConfirming
-)
-
-type doneMsg struct {
-	content    string
-	diffBlocks string
-	duration   string
-	tokens     string
-	err        error
-}
-
-type confirmMsg struct {
-	req types.ConfirmRequest
-}
 
 type Model struct {
 	Bot      BotInterface
@@ -58,19 +26,17 @@ type Model struct {
 	Height   int
 	Ready    bool
 
-	Stream           *BlockStream
-	state            ChatState
-	processingStart  time.Time
-	processingPhase  string
-	lastStreamRender time.Time
-	Suggestions      *components.Suggestions
-	ConfirmBar       *components.ConfirmBar
-	Scrollbar        *components.Scrollbar
-
-	confirmCh chan types.ConfirmRequest
+	state           chatState
+	processingStart time.Time
+	processingPhase string
+	Todos           *components.TodoList
+	Suggestions     *components.Suggestions
+	ConfirmBar      *components.ConfirmBar
+	Scrollbar       *components.Scrollbar
+	confirmCh        chan types.ConfirmRequest
 }
 
-const Version = "0.1.0"
+const version = "0.1.0"
 
 func NewModel(b BotInterface) *Model {
 	sp := spinner.New()
@@ -79,18 +45,18 @@ func NewModel(b BotInterface) *Model {
 
 	m := &Model{
 		Bot:         b,
-		Header:      components.NewHeader(80, b.Provider(), b.Model(), Version),
+		Header:      components.NewHeader(80, b.Provider(), b.Model(), version),
 		Messages:    components.NewMessages(80, 14, &sty),
 		Input:       components.NewInput(80),
-		Splash:      components.NewSplash(80, 24, Version),
+		Splash:      components.NewSplash(80, 24, version),
 		Spinner:     sp,
-		Stream:      &BlockStream{},
+		Todos:       components.NewTodoList(),
 		Suggestions: components.NewSuggestions(&sty),
 		ConfirmBar:  components.NewConfirmBar(&sty),
 		Scrollbar:   components.NewScrollbar(&sty),
 		Width:       80,
 		Height:      24,
-		state:       StateReady,
+		state:       stateReady,
 		confirmCh:   make(chan types.ConfirmRequest),
 	}
 
@@ -103,6 +69,12 @@ func NewModel(b BotInterface) *Model {
 		m.setPhase(phase)
 	})
 
+	b.WireTodoWrite(func(items []tools.TodoItem) {
+		m.Todos.SetItems(items)
+		m.Messages.SetTodos(todoItemsText(items))
+		b.SetCtxTodos(todoItemsText(items))
+	})
+
 	return m
 }
 
@@ -112,28 +84,29 @@ func (m *Model) Init() tea.Cmd {
 
 func (m *Model) resizeMessages() {
 	extra := 0
-	if m.state == StateConfirming {
+	if m.state == stateConfirming {
 		extra = m.ConfirmBar.Height()
 	}
 	m.Messages.SetSize(m.Width-1, m.Height-m.Header.Height()-m.Input.Height()-contentMarginV-extra)
 }
 
-func (m *Model) transitionTo(state ChatState) {
+func (m *Model) transitionTo(state chatState) {
 	m.state = state
 	switch state {
-	case StateReady:
-			m.setPhase(PhaseReady)
+	case stateReady:
+		m.setPhase(PhaseReady)
 		m.Messages.SetProcessing(false)
 		m.Input.SetSending(false)
 		m.ConfirmBar.Clear()
-	case StateProcessing:
+	case stateProcessing:
 		m.processingStart = time.Now()
-		m.setPhase(PhaseThinking)
-		m.Messages.SetProcessingStatus(PhaseThinking)
-		m.Stream.Reset()
+		m.setPhase(PhaseWaiting)
+		m.Messages.SetProcessingStatus(PhaseWaiting)
+
 		m.Messages.SetProcessing(true)
+		m.Todos.SetItems(nil)
 		m.Input.SetSending(true)
-	case StateConfirming:
+	case stateConfirming:
 	}
 	m.resizeMessages()
 }
@@ -146,4 +119,32 @@ func listenConfirm(ch <-chan types.ConfirmRequest) tea.Cmd {
 		}
 		return confirmMsg{req: req}
 	}
+}
+
+func todoItemsText(items []tools.TodoItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	done := 0
+	for _, it := range items {
+		if it.Status == "completed" {
+			done++
+		}
+	}
+	if done == len(items) {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Tasks %d/%d\n", done, len(items)))
+	for _, it := range items {
+		icon := "⬜"
+		switch it.Status {
+		case "in_progress":
+			icon = "🔄"
+		case "completed":
+			icon = "✅"
+		}
+		b.WriteString(fmt.Sprintf(" %s %s\n", icon, it.Content))
+	}
+	return b.String()
 }

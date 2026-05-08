@@ -13,6 +13,8 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+
+const charLimit = 32768
 type Input struct {
 	textarea      textarea.Model
 	width         int
@@ -30,7 +32,7 @@ func NewInput(width int) *Input {
 	ta.SetVirtualCursor(false)
 	ta.Focus()
 	ta.Prompt = styles.CatEyeStyle.Bold(true).Render(styles.HeavyVert + " ")
-	ta.CharLimit = 32768
+	ta.CharLimit = charLimit
 	ta.SetWidth(width)
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
@@ -161,7 +163,7 @@ func (i *Input) View() string {
 
 	footer := styles.BorderStyle.Render(styles.Vertical+" ") +
 		styles.SubtleStyle.Render("Follow:") + " " +
-		styles.GreenStyle.Render(followText)
+		styles.TealStyle.Render(followText)
 	footerW := lipgloss.Width(footer)
 	end := styles.BorderStyle.Render(styles.Vertical)
 	pad := max(0, w-footerW-lipgloss.Width(end))
