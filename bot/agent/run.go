@@ -48,9 +48,9 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 		a.drainSteering()
 		if a.getCtx().Err() != nil {
 			if callback != nil {
-				callback(a.currentStep, "done", "chat", "", "", "已中断", 0, 0)
+				callback(a.currentStep, "done", "chat", "", "", "Interrupted", 0, 0)
 			}
-			return &RunResult{FinalOutput: "已中断", Steps: a.currentStep}
+			return &RunResult{FinalOutput: "Interrupted", Steps: a.currentStep}
 		}
 
 		reasoning := a.Reason(state)
@@ -59,9 +59,9 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 			if a.finished {
 				writeAgentLog("Run: interrupted + finished → abort")
 				if callback != nil {
-					callback(a.currentStep, "done", "chat", "", "", "已中断", 0, 0)
+					callback(a.currentStep, "done", "chat", "", "", "Interrupted", 0, 0)
 				}
-				return &RunResult{FinalOutput: "已中断", Steps: a.currentStep}
+				return &RunResult{FinalOutput: "Interrupted", Steps: a.currentStep}
 			}
 			writeAgentLog("Run: interrupted → draining steering")
 			a.drainSteering()
@@ -87,7 +87,7 @@ func (a *Agent) Run(input string, callback RunCallback) *RunResult {
 
 	// maxIterations reached — force synthesize, unless aborted.
 	if a.getCtx().Err() != nil {
-		return &RunResult{FinalOutput: "已中断", Steps: a.currentStep}
+		return &RunResult{FinalOutput: "Interrupted", Steps: a.currentStep}
 	}
 	output := a.forceSynthesize()
 	a.ctxMgr.AddAssistantResponse(output, "")
@@ -113,7 +113,6 @@ func (a *Agent) executeAndFeedback(calls []tools.ToolCallItem, reasoning *Reason
 	if reasoning.TextContent != "" && callback != nil {
 		callback(a.currentStep, reasoning.Thought, "think", "", "", reasoning.TextContent, 0, 0)
 	}
-
 
 	// Signal tool starts before execution so slow tools (task/subagent)
 	// display immediately in the TUI rather than after they complete.

@@ -34,7 +34,8 @@ func (m *Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
-	m.state = stateConfirming
+	m.state = stateProcessing
+	m.resizeMessages()
 	return m, tea.Batch(listenConfirm(m.confirmCh), spinnerTick())
 }
 

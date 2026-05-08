@@ -1,8 +1,9 @@
-// text.go — 文本工具函数：固定高度渲染、折行、噪声过滤。
+// text.go — text utilities: fixed-height rendering, word wrapping, noise filtering.
 package processing
 
 import (
 	"strings"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 )
@@ -16,25 +17,18 @@ func RenderFixed(text string, maxLines int, skipEmpty bool, lineSty lipgloss.Sty
 	}
 	var out strings.Builder
 	for i := start; i < len(lines); i++ {
-		if i > start {
+		if skipEmpty && isEmptyOrNoise(lines[i]) {
+			continue
+		}
+		if out.Len() > 0 {
 			out.WriteString("\n")
-		}
-		if skipEmpty && lines[i] == "" {
-			continue
-		}
-		if IsNoiseLine(lines[i]) {
-			continue
 		}
 		out.WriteString("  " + lineSty.Render(lines[i]))
 	}
-	rendered := strings.Count(out.String(), "\n") + 1
-	target := rendered
-	if target < 2 {
-		target = 2
+	if out.Len() == 0 {
+		return ""
 	}
-	for i := rendered; i < target; i++ {
-		out.WriteString("\n")
-	}
+	out.WriteString("\n")
 	return out.String()
 }
 
@@ -61,13 +55,15 @@ func WrapPlain(text string, width int) string {
 	return strings.Join(result, "\n")
 }
 
-func IsNoiseLine(s string) bool {
+// isEmptyOrNoise returns true if a line is empty, whitespace-only, or
+// contains only non-content characters (dots, dashes, etc.).
+func isEmptyOrNoise(s string) bool {
 	trimmed := strings.TrimSpace(s)
 	if trimmed == "" {
-		return false
+		return true
 	}
 	for _, r := range trimmed {
-		if r != '.' {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r > 127 {
 			return false
 		}
 	}

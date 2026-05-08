@@ -223,23 +223,71 @@ func (m *Messages) ToggleLastAssistant() {
 			continue
 		}
 		blks := a.Blocks()
-		expand := false
-		for _, b := range blks {
-			if b.Type == block.BlockTool && b.ToolName == "edit" && b.Content != "" && b.Collapsed {
-				expand = true
-				break
-			}
+		if toggled := m.toggleBlocks(blks); toggled {
+			a.SetBlocks(blks)
+			m.Invalidate()
+			return
 		}
-		for j := range blks {
-			if blks[j].Type == block.BlockTool && blks[j].ToolName == "edit" && blks[j].Content != "" {
-				blks[j].Collapsed = !expand
-			}
-		}
-		a.SetBlocks(blks)
-		m.Invalidate()
-		return
 	}
 }
+
+// toggleBlocks toggles collapsed state for edit blocks (with content)
+// and tool groups (consecutive same-name blocks). Returns true if any toggle occurred.
+func (m *Messages) toggleBlocks(blks []block.ContentBlock) bool {
+	// Detect groups: iterate, track whether any group is currently collapsed.
+	collapsed := false
+	hasToggleable := false
+	for i := 0; i < len(blks); i++ {
+		b := blks[i]
+		if b.Type != block.BlockTool {
+			continue
+		}
+		// Count consecutive same-name blocks starting at i.
+		count := 1
+		for j := i + 1; j < len(blks) && blks[j].Type == block.BlockTool && blks[j].ToolName == b.ToolName; j++ {
+			count++
+		}
+		if count > 1 {
+			hasToggleable = true
+			if blks[i].Collapsed {
+				collapsed = true
+			}
+		}
+		if count == 1 && b.ToolName == "edit" && b.Content != "" {
+			hasToggleable = true
+			if b.Collapsed {
+				collapsed = true
+			}
+		}
+		i += count - 1 // skip to end of group
+	}
+
+	if !hasToggleable {
+		return false
+	}
+
+	// Toggle: collapse if expanded, expand if collapsed.
+	target := !collapsed
+	for i := 0; i < len(blks); i++ {
+		b := blks[i]
+		if b.Type != block.BlockTool {
+			continue
+		}
+		count := 1
+		for j := i + 1; j < len(blks) && blks[j].Type == block.BlockTool && blks[j].ToolName == b.ToolName; j++ {
+			count++
+		}
+		if count > 1 {
+			blks[i].Collapsed = target
+		}
+		if count == 1 && b.ToolName == "edit" && b.Content != "" {
+			blks[i].Collapsed = target
+		}
+		i += count - 1
+	}
+	return true
+}
+
 
 func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 	switch msg := msg.(type) {

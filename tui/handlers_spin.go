@@ -31,6 +31,7 @@ func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
 			p.SetSpinnerView(spinnerView)
 			p.SetStatusText(statusText)
 			p.SetTokens(prompt, compl)
+			p.SetCompactCount(m.Bot.CompactCount())
 		})
 
 		return spinnerTick()

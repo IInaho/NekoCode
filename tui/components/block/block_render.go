@@ -1,4 +1,4 @@
-// block_render.go — RenderBlock 分发器 + RenderBlocks 卡片包裹。
+// block_render.go — RenderBlock 分发器 + RenderBlocks 卡片包裹（含同名单行收折）。
 package block
 
 import (
@@ -23,6 +23,32 @@ func RenderBlock(b ContentBlock, width int, sty *styles.Styles) string {
 	}
 }
 
+// ToolGroupInfo describes a group of consecutive same-name tool blocks.
+type ToolGroupInfo struct {
+	Name  string
+	Count int
+	First ContentBlock
+	Rest  []ContentBlock
+}
+
+// BuildToolGroups groups consecutive same-name tool blocks.
+func BuildToolGroups(blocks []ContentBlock) []ToolGroupInfo {
+	var groups []ToolGroupInfo
+	for _, b := range blocks {
+		if b.Type != BlockTool {
+			continue
+		}
+		if len(groups) > 0 && groups[len(groups)-1].Name == b.ToolName {
+			g := &groups[len(groups)-1]
+			g.Count++
+			g.Rest = append(g.Rest, b)
+		} else {
+			groups = append(groups, ToolGroupInfo{Name: b.ToolName, Count: 1, First: b})
+		}
+	}
+	return groups
+}
+
 func RenderBlocks(blocks []ContentBlock, width int, sty *styles.Styles) string {
 	if len(blocks) == 0 {
 		return ""
@@ -33,20 +59,18 @@ func RenderBlocks(blocks []ContentBlock, width int, sty *styles.Styles) string {
 		cardW = 20
 	}
 
+	groups := BuildToolGroups(blocks)
 	var lines []string
-	prevWasTool := false
-	for i, b := range blocks {
-		if b.BatchTotal > 1 && b.BatchIdx == 1 {
-			lines = append(lines, "  "+toolAccent.Render(fmt.Sprintf("⚡ %d tools in parallel", b.BatchTotal)))
+	for _, g := range groups {
+		if g.Count <= 1 {
+			lines = append(lines, RenderBlock(g.First, cardW, sty))
+		} else {
+			lines = append(lines, renderGroupLine(g, cardW, sty))
 		}
-		if b.Type == BlockThought && prevWasTool && len(lines) > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, RenderBlock(b, cardW, sty))
-		prevWasTool = b.Type == BlockTool
-		if b.BatchTotal > 1 && b.BatchIdx == b.BatchTotal && i < len(blocks)-1 {
-			lines = append(lines, "")
-		}
+	}
+
+	if len(lines) == 0 {
+		return ""
 	}
 
 	body := strings.Join(lines, "\n")
@@ -58,4 +82,32 @@ func RenderBlocks(blocks []ContentBlock, width int, sty *styles.Styles) string {
 		Render(body)
 
 	return card
+}
+
+func renderGroupLine(g ToolGroupInfo, cardW int, sty *styles.Styles) string {
+	header := fmt.Sprintf("◆ %s ×%d", g.Name, g.Count)
+	arrow := ""
+	if g.First.Collapsed {
+		arrow = " " + sty.Subtle.Render("[+] 展开")
+	} else {
+		arrow = " " + sty.Subtle.Render("[-] 收起")
+	}
+	accentLine := "  " + toolAccent.Render(header+arrow)
+
+	if g.First.Collapsed {
+		return accentLine
+	}
+
+	var sb strings.Builder
+	sb.WriteString(accentLine)
+	all := append([]ContentBlock{g.First}, g.Rest...)
+	for _, b := range all {
+		line := RenderBlock(b, cardW, sty)
+		for _, l := range strings.Split(line, "\n") {
+			if l != "" {
+				sb.WriteString("\n" + l)
+			}
+		}
+	}
+	return sb.String()
 }

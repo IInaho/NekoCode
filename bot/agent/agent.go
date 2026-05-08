@@ -2,15 +2,12 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"primusbot/bot/tools"
-	"primusbot/bot/types"
 	"primusbot/bot/ctxmgr"
+	"primusbot/bot/tools"
 	"primusbot/llm"
 )
 
@@ -42,8 +39,8 @@ type Agent struct {
 	ctxMgr               *ctxmgr.Manager
 	llmClient            llm.LLM
 	toolRegistry         *tools.Registry
-	executor             *Executor
-	phaseFn              types.PhaseFunc
+	executor             *tools.Executor
+	phaseFn              tools.PhaseFunc
 	lastReasoningContent string
 	maxIterations        int
 	currentStep          int
@@ -74,24 +71,29 @@ func New(
 		ctxMgr:           ctxMgr,
 		llmClient:        llmClient,
 		toolRegistry:     toolRegistry,
-		executor:         NewExecutor(toolRegistry),
+		executor:         tools.NewExecutor(toolRegistry),
 		maxIterations:    15,
 		steeringCh:       make(chan string, 4),
-		synthesizePrompt: "以上是你收集到的信息。请根据这些信息给出最终回答，不要再调用工具。直接输出结论。",
+		synthesizePrompt: "Based on the information collected above, provide a final answer. Do NOT call any more tools. Output your conclusion directly.",
 	}
 }
 
-func (a *Agent) SetConfirmFn(fn types.ConfirmFunc) { a.executor.SetConfirmFn(fn) }
-func (a *Agent) SetPhaseFn(fn types.PhaseFunc)     { a.phaseFn = fn; a.executor.SetPhaseFn(fn) }
-func (a *Agent) PhaseFn() types.PhaseFunc          { return a.phaseFn }
+func (a *Agent) SetConfirmFn(fn tools.ConfirmFunc) { a.executor.SetConfirmFn(fn) }
+func (a *Agent) SetPhaseFn(fn tools.PhaseFunc)     { a.phaseFn = fn; a.executor.SetPhaseFn(fn) }
+func (a *Agent) PhaseFn() tools.PhaseFunc          { return a.phaseFn }
 func (a *Agent) WireTodoWrite(fn tools.TodoFunc) {
 	if t, err := a.toolRegistry.Get("todo_write"); err == nil {
 		t.(*tools.TodoWriteTool).SetUpdateFn(fn)
 	}
 }
-func (a *Agent) SetShouldStop(fn ShouldStopFunc)    { a.shouldStop = fn }
-func (a *Agent) SetContextTransform(fn ContextTransform) { a.transformContext = fn }
-func (a *Agent) SetSynthesizePrompt(prompt string)  { a.synthesizePrompt = prompt }
+func (a *Agent) WireSnip(fn tools.SnipFunc) {
+	if t, err := a.toolRegistry.Get("snip"); err == nil {
+		t.(*tools.SnipTool).Wire(fn)
+	}
+}
+func (a *Agent) SetShouldStop(fn ShouldStopFunc)           { a.shouldStop = fn }
+func (a *Agent) SetContextTransform(fn ContextTransform)   { a.transformContext = fn }
+func (a *Agent) SetSynthesizePrompt(prompt string)         { a.synthesizePrompt = prompt }
 func (a *Agent) SetStreamFn(fn StreamCallback)             { a.streamFn = fn }
 func (a *Agent) SetReasoningStreamFn(fn ReasoningCallback) { a.reasoningFn = fn }
 
@@ -172,12 +174,4 @@ func (a *Agent) Reset() {
 	a.tokenCompletion.Store(0)
 	a.tokenCalls.Store(0)
 	a.startTime = time.Now()
-}
-
-
-func writeAgentLog(format string, args ...interface{}) {
-	f, err := os.OpenFile("/tmp/primusbot-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil { return }
-	defer f.Close()
-	fmt.Fprintf(f, format+"\n", args...)
 }

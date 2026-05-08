@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"primusbot/bot/tools"
-	"primusbot/bot/types"
 	"primusbot/tui/components"
 	"primusbot/tui/styles"
 
@@ -33,10 +32,10 @@ type Model struct {
 	Suggestions     *components.Suggestions
 	ConfirmBar      *components.ConfirmBar
 	Scrollbar       *components.Scrollbar
-	confirmCh        chan types.ConfirmRequest
+	confirmCh       chan tools.ConfirmRequest
 }
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func NewModel(b BotInterface) *Model {
 	sp := spinner.New()
@@ -57,10 +56,10 @@ func NewModel(b BotInterface) *Model {
 		Width:       80,
 		Height:      24,
 		state:       stateReady,
-		confirmCh:   make(chan types.ConfirmRequest),
+		confirmCh:   make(chan tools.ConfirmRequest),
 	}
 
-	b.SetConfirmFn(func(req types.ConfirmRequest) bool {
+	b.SetConfirmFn(func(req tools.ConfirmRequest) bool {
 		m.confirmCh <- req
 		return <-req.Response
 	})
@@ -111,7 +110,7 @@ func (m *Model) transitionTo(state chatState) {
 	m.resizeMessages()
 }
 
-func listenConfirm(ch <-chan types.ConfirmRequest) tea.Cmd {
+func listenConfirm(ch <-chan tools.ConfirmRequest) tea.Cmd {
 	return func() tea.Msg {
 		req, ok := <-ch
 		if !ok {

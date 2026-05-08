@@ -11,10 +11,9 @@ import (
 	_ "embed"
 	"primusbot/bot/agent"
 	"primusbot/bot/agent/subagent"
-	"primusbot/bot/extensions"
-	"primusbot/bot/tools"
-	"primusbot/bot/types"
 	"primusbot/bot/ctxmgr"
+	"primusbot/bot/session"
+	"primusbot/bot/tools"
 	"primusbot/llm"
 )
 
@@ -23,12 +22,14 @@ type Bot struct {
 	ctxMgr    *ctxmgr.Manager
 	cmdParser *Parser
 	ag        *agent.Agent
+	sessMem   *session.Memory
+	extractor *session.Extractor
 }
 
 //go:embed prompt/system.md
 var SystemPrompt string
 
-func New(exts ...extensions.Extension) *Bot {
+func New() *Bot {
 	ctx := context.Background()
 
 	cfg, _ := LoadConfig()
@@ -40,7 +41,7 @@ func New(exts ...extensions.Extension) *Bot {
 	// Inject environment as <system-reminder> user message (not system prompt)
 	// so the system prompt stays lean for prompt caching.
 	if cwd, err := os.Getwd(); err == nil {
-		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\n当前工作目录: %s\n用 list/glob 探索目录结构，需要时再 read。\n</system-reminder>", cwd))
+		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\nWorking directory: %s\nUse list/glob to explore, read when needed.\n</system-reminder>", cwd))
 	}
 	ctxMgr.SetTokenBudget(cfg.TokenBudget)
 
@@ -71,29 +72,20 @@ func New(exts ...extensions.Extension) *Bot {
 
 	cmdParser := NewParser()
 
-	// Register extension tools and commands.
-	for _, ext := range exts {
-		for _, t := range ext.Tools() {
-			toolRegistry.Register(t)
-		}
-		for _, c := range ext.Commands() {
-			name := c.Name
-			handler := c.Handler
-			cmdParser.Register(name, func(cmd *Command) (string, bool) {
-				result, err := handler(cmd.Args)
-				if err != nil {
-					return "Error: " + err.Error(), true
-				}
-				return result, true
-			})
-		}
+	sessID := fmt.Sprintf("session-%d", time.Now().Unix())
+	sessMem, err := session.New(sessID, "")
+	if err != nil {
+		sessMem, _ = session.New("default", "") // fallback to /tmp-based default
 	}
+	sessExt := session.NewExtractor(llmClient)
 
 	b := &Bot{
 		cfg:       cfg,
 		ctxMgr:    ctxMgr,
 		cmdParser: cmdParser,
 		ag:        agent.New(ctx, ctxMgr, llmClient, toolRegistry),
+		sessMem:   sessMem,
+		extractor: sessExt,
 	}
 
 	// Sub-agent engine uses a separate LLM client with thinking disabled.
@@ -109,13 +101,13 @@ func New(exts ...extensions.Extension) *Bot {
 		t.(*tools.TaskTool).Wire(func(ctx context.Context, prompt, agentType string) (string, error) {
 			at, ok := subagent.Get(agentType)
 			if !ok {
-				return "", fmt.Errorf("未知的子 agent 类型: %s（可用: %s）", agentType, strings.Join(names, ", "))
+				return "", fmt.Errorf("unknown sub-agent type: %s (available: %s)", agentType, strings.Join(names, ", "))
 			}
 			cwd, _ := os.Getwd()
 			cfg := subagent.RunConfig{
-				Prompt:    prompt,
-				AgentType: at,
-				Cwd:       cwd,
+				Prompt:          prompt,
+				AgentType:       at,
+				Cwd:             cwd,
 				DisableThinking: true, // subagents execute, don't ponder
 			}
 			if fn := b.ag.PhaseFn(); fn != nil {
@@ -143,7 +135,7 @@ func New(exts ...extensions.Extension) *Bot {
 		if toolResults > 20 {
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
-				Content: "【系统指令】已经有 " + strconv.Itoa(toolResults) + " 个工具结果了。检查是否有未完成的子任务——如果有，继续调用 task 执行。如果全部完成，调用 task(verify) 验证，然后汇报结果。",
+				Content: "[System] " + strconv.Itoa(toolResults) + " tool results accumulated. Check for unfinished sub-tasks — if any, continue with task. If all done, call task(verify) to validate, then report results.",
 			})
 		}
 		return msgs
@@ -154,8 +146,12 @@ func New(exts ...extensions.Extension) *Bot {
 		GetConfig:      func() string { return fmt.Sprintf("%s/%s", cfg.Provider, cfg.Model) },
 		ForceSummarize: func() (string, error) { return b.ForceSummarize() },
 		ContextStats:   func() string { return b.ContextStats() },
+		FreshStart:     func() (string, error) { return b.ForceFreshStart() },
 	}
 	RegisterDefaultCommands(b.cmdParser, callbacks)
+
+	// Wire snip tool so the model can proactively prune history.
+	b.WireSnip()
 
 	return b
 }
@@ -176,12 +172,21 @@ func (b *Bot) ExecuteCommand(input string) (string, bool) {
 func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string, batchIdx, batchTotal int)) (string, error) {
 	result := b.ag.Run(input, onStep)
 	b.SummarizeIfNeeded()
+
+	// Trigger async session memory extraction if thresholds are met.
+	_, tokens, _ := b.ctxMgr.Stats()
+	toolCount := b.ctxMgr.ToolResultCount()
+	hasToolCall := b.ctxMgr.LastAssistantHasToolCall()
+	if b.sessMem.ShouldExtract(tokens, toolCount, hasToolCall, session.DefaultExtractConfig) {
+		b.extractor.RunAsync(b.sessMem, b.ctxMgr, nil)
+	}
+
 	return result.FinalOutput, result.Error
 }
 
 // Steer injects a user message mid-agent-loop, like Pi's steering messages.
-func (b *Bot) Steer(msg string)                { b.ag.Steer(msg) }
-func (b *Bot) Abort()                            { b.ag.Abort() }
+func (b *Bot) Steer(msg string) { b.ag.Steer(msg) }
+func (b *Bot) Abort()           { b.ag.Abort() }
 func (b *Bot) SetStreamFn(fn func(delta string)) {
 	b.ag.SetStreamFn(func(delta string, _ bool) { fn(delta) })
 }
@@ -190,18 +195,24 @@ func (b *Bot) SetReasoningStreamFn(fn func(delta string)) {
 	b.ag.SetReasoningStreamFn(fn)
 }
 
-func (b *Bot) SetConfirmFn(fn types.ConfirmFunc) {
+func (b *Bot) SetConfirmFn(fn tools.ConfirmFunc) {
 	b.ag.SetConfirmFn(fn)
 }
 func (b *Bot) WireTodoWrite(fn tools.TodoFunc) {
 	b.ag.WireTodoWrite(fn)
 }
 
-func (b *Bot) SetPhaseFn(fn types.PhaseFunc) {
+func (b *Bot) WireSnip() {
+	b.ag.WireSnip(func(startIdx, endIdx int) string {
+		return b.ctxMgr.Snip(startIdx, endIdx)
+	})
+}
+
+func (b *Bot) SetPhaseFn(fn tools.PhaseFunc) {
 	b.ag.SetPhaseFn(fn)
 }
 
-func (b *Bot) SetCtxTodos(text string)   { b.ctxMgr.SetTodos(text) }
+func (b *Bot) SetCtxTodos(text string) { b.ctxMgr.SetTodos(text) }
 
 func (b *Bot) SummarizeIfNeeded() {
 	if b.ctxMgr.NeedsSummarization() {
@@ -212,26 +223,26 @@ func (b *Bot) SummarizeIfNeeded() {
 func (b *Bot) ForceSummarize() (string, error) {
 	count, tokens, hadSummary := b.ctxMgr.Stats()
 	if count <= 2 {
-		return "对话太短，无需压缩", nil
+		return "Conversation too short, nothing to compact.", nil
 	}
 	if err := b.ctxMgr.Summarize(); err != nil {
 		return "", err
 	}
 	_, newTokens, _ := b.ctxMgr.Stats()
-	prev := "已压缩"
+	action := "Compacted"
 	if hadSummary {
-		prev = "已更新摘要"
+		action = "Summary updated"
 	}
-	return fmt.Sprintf("%s：%d 条消息 → %d tokens", prev, tokens, newTokens), nil
+	return fmt.Sprintf("%s: %d messages, ~%d → ~%d tokens", action, count, tokens, newTokens), nil
 }
 
 func (b *Bot) ContextStats() string {
 	count, tokens, hasSummary := b.ctxMgr.Stats()
-	summary := "无"
+	summary := "none"
 	if hasSummary {
-		summary = "有"
+		summary = "yes"
 	}
-	return fmt.Sprintf("消息: %d 条, 约 %d tokens, 摘要: %s", count, tokens, summary)
+	return fmt.Sprintf("Messages: %d, ~%d tokens, summary: %s", count, tokens, summary)
 }
 
 func (b *Bot) TokenUsage() (prompt, completion int) {
@@ -240,6 +251,10 @@ func (b *Bot) TokenUsage() (prompt, completion int) {
 
 func (b *Bot) ContextTokens() int {
 	return b.ag.ContextTokens()
+}
+
+func (b *Bot) CompactCount() int {
+	return b.ctxMgr.CompactCount()
 }
 
 func (b *Bot) Duration() string {
@@ -255,6 +270,40 @@ func (b *Bot) Duration() string {
 
 func (b *Bot) CommandNames() []string {
 	return b.cmdParser.Commands()
+}
+
+// ForceFreshStart summarizes the current conversation (if enough content) then
+// clears all messages, keeping the summary for future context.
+// Uses session memory content as summary if available (free), otherwise calls the
+// configured summarizer.
+func (b *Bot) ForceFreshStart() (string, error) {
+	count, oldTokens, _ := b.ctxMgr.Stats()
+	if count <= 2 {
+		b.ctxMgr.FreshStart()
+		return "New conversation started.", nil
+	}
+
+	// Try session memory first (free, no API call).
+	if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() {
+		b.ctxMgr.SetSummary(content)
+		b.ctxMgr.FreshStart()
+		_, newTokens, _ := b.ctxMgr.Stats()
+		return fmt.Sprintf("New conversation. %d messages, ~%d tokens → session memory (~%d tokens)", count, oldTokens, newTokens), nil
+	}
+
+	// Fall back to API summarizer.
+	if b.ctxMgr.NeedsSummarization() {
+		if err := b.ctxMgr.Summarize(); err != nil {
+			return "", err
+		}
+	}
+	b.ctxMgr.FreshStart()
+	_, newTokens, hasSummary := b.ctxMgr.Stats()
+	detail := "no summary"
+	if hasSummary {
+		detail = "with summary"
+	}
+	return fmt.Sprintf("New conversation. %d messages, ~%d tokens → %s (~%d tokens)", count, oldTokens, detail, newTokens), nil
 }
 
 // cloneLLM creates a copy of the LLM client with the same provider/model config.

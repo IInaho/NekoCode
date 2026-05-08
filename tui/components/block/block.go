@@ -26,3 +26,5 @@ type ContentBlock struct {
 }
 
 var toolAccent = lipgloss.NewStyle().Foreground(lipgloss.Color(styles.Yellow))
+
+func ToolAccent() lipgloss.Style { return toolAccent }

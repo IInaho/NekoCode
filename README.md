@@ -37,8 +37,8 @@
 ### 亮点
 
 **🎨 精心打磨的 TUI 体验**
-- **厚左色条**：`▐` 粗块 + 角色专属配色（金/teal/蓝/红），lipgloss 块级渲染
-- **工具卡片**：暖金色边框，仅 edit 工具可折叠展开 diff（+/- 行着色）
+- **厚左色条**：角色专属配色（金/teal/蓝/红），lipgloss 块级渲染
+- **工具卡片**：暖金色边框，edit diff 折叠展开（+/- 行着色）+ 同名单行工具组折叠
 - **独立 Scrollbar**：自管理渲染，与消息列表并列排版
 - **💭 思考过程**：实时展示 Agent 推理链，output/reasoning 分区显示
 - **分隔线**：output（teal）和 reasoning（蓝）横跨全宽分隔线，动态 2-6 行高度
@@ -53,7 +53,7 @@
 
 **🔧 丰富的工具链**
 - bash（全部需确认 + 危险命令拒绝）、read、write、edit（+ diff）、list、glob（支持 **）、grep
-- web_search（Exa MCP + Bing 降级）、web_fetch（DNS 安全校验）
+- web_search（Exa MCP）、web_fetch（DNS 安全校验 + 内网拒绝）
 - task（子 agent 委派）、todo_write（任务跟踪）
 - 路径穿越防护、ANSI 清理
 
@@ -64,7 +64,7 @@
 
 **🧩 组件化解耦**
 - `BotInterface` 17 方法接口，TUI 与 bot 零耦合
-- `bot/types` Phase 常量统一定义，agent 和 TUI 两边引用
+- `bot/tools` Phase/Confirm 类型统一定义，agent 和 TUI 两边引用
 - TUI 38 文件，block/message/processing 三个子包，单一职责
 
 ---
@@ -111,6 +111,7 @@ go build -o primusbot .
 | 命令 | |
 |------|------|
 | `/help` | 显示命令列表 |
+| `/new` | 新对话（保留摘要） |
 | `/clear` | 清空对话历史 |
 | `/stats` | 上下文用量 |
 | `/summarize` | 手动压缩记忆 |
@@ -136,14 +137,14 @@ go build -o primusbot .
 ```
 primusbot/
 ├── main.go             入口
-├── llm/                LLM 网关：Anthropic / OpenAI 兼容（4 文件）
+├── llm/                LLM 网关：Anthropic / OpenAI 兼容（5 文件）
 ├── bot/
 │   ├── bot.go          核心组装
-│   ├── config.go        配置 + 斜杠命令
-│   ├── types/           共享类型 + Phase 常量
-│   ├── extensions/      插件接口
-│   ├── ctxmgr/          上下文管理（4 文件）
-│   ├── tools/           工具系统（12 工具）
+│   ├── config.go        配置加载
+│   ├── commands.go      斜杠命令系统
+│   ├── session/         Session Memory（异步提取）
+│   ├── ctxmgr/          上下文管理（5 文件）
+│   ├── tools/           工具系统（19 文件，12 工具 + 基础设施）
 │   └── agent/           Agent 循环 + 子 agent 引擎
 └── tui/                终端 UI（38 文件，block/message/processing 子包）
 ```

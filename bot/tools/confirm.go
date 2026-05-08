@@ -1,17 +1,14 @@
-// Package types holds shared type definitions used across bot, agent, and TUI.
-package types
-
-import "primusbot/bot/tools"
+// confirm.go — 用户确认、阶段回调类型和常量。
+package tools
 
 type ConfirmRequest struct {
 	ToolName string
 	Args     map[string]interface{}
-	Level    tools.DangerLevel
+	Level    DangerLevel
 	Response chan bool
 }
 
 type ConfirmFunc func(req ConfirmRequest) bool
-
 type PhaseFunc func(phase string)
 
 // Phase constants — emitted by agent, displayed by TUI status line.

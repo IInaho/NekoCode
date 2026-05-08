@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"primusbot/bot/tools"
-	"primusbot/bot/types"
 	"primusbot/llm"
 )
 
@@ -38,12 +37,16 @@ type ReasoningResult struct {
 }
 
 func (a *Agent) Reason(state *stepState) *ReasoningResult {
+	// Drain any BTW steering messages that arrived since the last loop-top drain,
+	// minimizing the race window between drainSteering and the LLM call.
+	a.drainSteering()
+
 	if a.phaseFn != nil {
-		a.phaseFn(types.PhaseThinking)
+		a.phaseFn(tools.PhaseThinking)
 	}
 	if strings.HasPrefix(state.Input, "/") {
 		return &ReasoningResult{
-			Thought: "用户输入了命令", Action: ActionFinish, IsFinal: true,
+			Thought: "User entered a command", Action: ActionFinish, IsFinal: true,
 		}
 	}
 
@@ -51,22 +54,22 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return &ReasoningResult{
-				Thought: "用户中断", Action: ActionChat,
+				Thought: "User interrupted", Action: ActionChat,
 				Interrupted: true,
 			}
 		}
 		return &ReasoningResult{
-			Thought: "LLM调用失败", Action: ActionChat,
-			ActionInput: fmt.Sprintf("抱歉，调用失败: %v", err), IsFinal: true,
+			Thought: "LLM call failed", Action: ActionChat,
+			ActionInput: fmt.Sprintf("Sorry, call failed: %v", err), IsFinal: true,
 		}
 	}
 
 	if len(toolCalls) == 0 {
 		if textContent == "" {
-			textContent = "抱歉，我无法确定要做什么"
+			textContent = "Sorry, I couldn't determine what to do"
 		}
 		return &ReasoningResult{
-			Thought: "直接回复", Action: ActionChat,
+			Thought: "Direct reply", Action: ActionChat,
 			ActionInput: textContent, IsFinal: true,
 		}
 	}
@@ -74,9 +77,9 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 	if len(toolCalls) == 1 {
 		tc := toolCalls[0]
 		return &ReasoningResult{
-			Thought: "调用工具: " + tc.Name, Action: ActionExecuteTool,
+			Thought: "Call tool: " + tc.Name, Action: ActionExecuteTool,
 			ActionInput: tc.Name + ":" + formatArgs(tc.Args),
-			ToolCallID: tc.ID, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
+			ToolCallID:  tc.ID, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
 		}
 	}
 
@@ -85,8 +88,8 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		names = append(names, tc.Name)
 	}
 	return &ReasoningResult{
-		Thought: "并行调用工具: " + strings.Join(names, ", "),
-		Action: ActionExecuteTool, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
+		Thought: "Parallel tool calls: " + strings.Join(names, ", "),
+		Action:  ActionExecuteTool, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
 	}
 }
 
@@ -104,13 +107,14 @@ func (a ActionType) String() string {
 }
 
 func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
-	toolDefs := descriptorsToToolDefs(a.toolRegistry.Descriptors())
+	toolDefs := tools.ToToolDefs(a.toolRegistry.Descriptors())
 
 	var items []ToolCallItem
 	var textContent string
 
-	err := withRetry(a.getCtx(), func() error {
 	firstAttempt := true
+	err := withRetry(a.getCtx(), func() error {
+		a.ctxMgr.MicroCompactIfNeeded()
 		messages := a.ctxMgr.Build(true)
 		if a.transformContext != nil {
 			messages = a.transformContext(messages)
@@ -136,7 +140,10 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		}
 		estPrompt := ctxChars / 4
 		estCompl := 0
-		if firstAttempt { a.AddTokens(estPrompt, 0); firstAttempt = false }
+		if firstAttempt {
+			a.AddTokens(estPrompt, 0)
+			firstAttempt = false
+		}
 
 		finishReason := ""
 		phaseWaiting := true
@@ -145,13 +152,13 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 			if phaseWaiting && token.ReasoningContent != "" {
 				phaseWaiting = false
 				if a.phaseFn != nil {
-					a.phaseFn(types.PhaseThinking)
+					a.phaseFn(tools.PhaseThinking)
 				}
 			}
 			if phaseThink && token.Content != "" {
 				phaseThink = false
 				if a.phaseFn != nil {
-					a.phaseFn(types.PhaseReasoning)
+					a.phaseFn(tools.PhaseReasoning)
 				}
 			}
 			if token.Content != "" {
@@ -193,12 +200,10 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		}
 
 		// Escalate max_tokens if model hit output limit without tool calls.
-		if finishReason == "length" && len(tcAccum) == 0 {
-			if l, ok := a.llmClient.(interface{ MaxTokens() int }); ok && l.MaxTokens() < 64000 {
-				writeAgentLog("callLLM: finish_reason=length, escalating max_tokens to 64000")
-				if setter, ok := l.(interface{ SetMaxTokens(int) }); ok { setter.SetMaxTokens(64000) }
-				return fmt.Errorf("output token limit hit, retrying with higher limit")
-			}
+		if finishReason == "length" && len(tcAccum) == 0 && a.llmClient.MaxTokens() < 64000 {
+			writeAgentLog("callLLM: finish_reason=length, escalating max_tokens to 64000")
+			a.llmClient.SetMaxTokens(64000)
+			return fmt.Errorf("output token limit hit, retrying with higher limit")
 		}
 
 		select {
@@ -238,7 +243,7 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		for _, tc := range toolCalls {
 			var args map[string]interface{}
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				return fmt.Errorf("解析工具参数失败: %v", err)
+				return fmt.Errorf("failed to parse tool arguments: %v", err)
 			}
 			items = append(items, ToolCallItem{
 				ID: tc.ID, Name: tc.Function.Name, Args: args,
@@ -262,8 +267,9 @@ type toolAccum struct {
 
 func (a *Agent) forceSynthesize() string {
 	var text string
-	err := withRetry(a.getCtx(), func() error {
 	firstAttempt := true
+	err := withRetry(a.getCtx(), func() error {
+		a.ctxMgr.MicroCompactIfNeeded()
 		messages := a.ctxMgr.Build(false)
 		messages = append(messages, llm.Message{
 			Role: "user", Content: a.synthesizePrompt,
@@ -285,7 +291,10 @@ func (a *Agent) forceSynthesize() string {
 		}
 		estPrompt := ctxChars / 4
 		estCompl := 0
-		if firstAttempt { a.AddTokens(estPrompt, 0); firstAttempt = false }
+		if firstAttempt {
+			a.AddTokens(estPrompt, 0)
+			firstAttempt = false
+		}
 
 		finishReason := ""
 		firstToken := true
@@ -293,7 +302,7 @@ func (a *Agent) forceSynthesize() string {
 			if firstToken && token.Content != "" {
 				firstToken = false
 				if a.phaseFn != nil {
-					a.phaseFn(types.PhaseReasoning)
+					a.phaseFn(tools.PhaseReasoning)
 				}
 			}
 			if token.Content != "" {
@@ -312,12 +321,10 @@ func (a *Agent) forceSynthesize() string {
 			}
 		}
 
-		if finishReason == "length" {
-			if l, ok := a.llmClient.(interface{ MaxTokens() int }); ok && l.MaxTokens() < 64000 {
-				writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens to 64000")
-				if setter, ok := l.(interface{ SetMaxTokens(int) }); ok { setter.SetMaxTokens(64000) }
-				return fmt.Errorf("output token limit hit, retrying with higher limit")
-			}
+		if finishReason == "length" && a.llmClient.MaxTokens() < 64000 {
+			writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens to 64000")
+			a.llmClient.SetMaxTokens(64000)
+			return fmt.Errorf("output token limit hit, retrying with higher limit")
 		}
 
 		select {
@@ -332,37 +339,12 @@ func (a *Agent) forceSynthesize() string {
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return "已中断"
+			return "Interrupted"
 		}
-		return "抱歉，信息收集完成但总结失败"
+		return "Information collected but summarization failed"
 	}
 	if text != "" {
 		return text
 	}
-	return "抱歉，无法生成总结"
-}
-
-func descriptorsToToolDefs(descs []tools.Descriptor) []llm.ToolDef {
-	defs := make([]llm.ToolDef, len(descs))
-	for i, d := range descs {
-		props := make(map[string]llm.Property)
-		var required []string
-		for _, p := range d.Parameters {
-			props[p.Name] = llm.Property{Type: p.Type, Description: p.Description}
-			if p.Required {
-				required = append(required, p.Name)
-			}
-		}
-		defs[i] = llm.ToolDef{
-			Type: "function",
-			Function: llm.FunctionDef{
-				Name:        d.Name,
-				Description: d.Description,
-				Parameters: llm.Parameters{
-					Type: "object", Properties: props, Required: required,
-				},
-			},
-		}
-	}
-	return defs
+	return "Unable to generate summary"
 }

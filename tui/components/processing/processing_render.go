@@ -2,6 +2,7 @@
 package processing
 
 import (
+	"fmt"
 	"strings"
 
 	"primusbot/tui/components/block"
@@ -58,6 +59,9 @@ func (p *ProcessingItem) renderHeader() string {
 	if p.tokenPrompt > 0 || p.tokenCompl > 0 {
 		tp = "  " + p.sty.Subtle.Render("↑"+styles.FmtTokens(p.tokenPrompt)) + " " + p.sty.Teal.Render("↓"+styles.FmtTokens(p.tokenCompl))
 	}
+	if p.compactCount > 0 {
+		tp += "  " + p.sty.Subtle.Render(fmt.Sprintf("🧹%d", p.compactCount))
+	}
 	return p.sty.Teal.Render(s) + " " + p.sty.Subtle.Render(l) + tp
 }
 
@@ -85,16 +89,7 @@ func (p *ProcessingItem) renderToolSection(contentW, cw int) string {
 	if toolN != p.cachedToolN || cw != p.cachedToolW {
 		p.cachedTool = ""
 		if toolN > 0 {
-			var sb strings.Builder
-			for _, b := range p.blocks {
-				switch b.Type {
-				case block.BlockTool:
-					for _, l := range strings.Split(block.RenderBlock(b, contentW, p.sty), "\n") {
-						sb.WriteString("\n" + l)
-					}
-				}
-			}
-			p.cachedTool = sb.String()
+			p.cachedTool = p.renderToolBlocks(contentW)
 		}
 		p.cachedToolN = toolN
 		p.cachedToolW = cw
@@ -102,9 +97,62 @@ func (p *ProcessingItem) renderToolSection(contentW, cw int) string {
 	return p.cachedTool
 }
 
+// renderToolBlocks groups consecutive same-name tool blocks using the
+// shared grouping logic from the block package.
+func (p *ProcessingItem) renderToolBlocks(contentW int) string {
+	groups := block.BuildToolGroups(p.blocks)
+	if len(groups) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, g := range groups {
+		sb.WriteString("\n")
+		if g.Count <= 1 {
+			sb.WriteString(block.RenderBlock(g.First, contentW, p.sty))
+		} else {
+			sb.WriteString(p.renderToolGroup(g, contentW))
+		}
+	}
+	return sb.String()
+}
+
+func (p *ProcessingItem) renderToolGroup(g block.ToolGroupInfo, contentW int) string {
+	header := fmt.Sprintf("◆ %s ×%d", g.Name, g.Count)
+	collapsed := g.First.Collapsed
+
+	arrow := ""
+	if collapsed {
+		arrow = " " + p.sty.Subtle.Render("[+] 展开")
+	} else {
+		arrow = " " + p.sty.Subtle.Render("[-] 收起")
+	}
+	accentLine := "  " + block.ToolAccent().Render(header+arrow)
+
+	if collapsed {
+		return accentLine
+	}
+
+	var sb strings.Builder
+	sb.WriteString(accentLine)
+	all := append([]block.ContentBlock{g.First}, g.Rest...)
+	for _, b := range all {
+		line := block.RenderBlock(b, contentW, p.sty)
+		for _, l := range strings.Split(line, "\n") {
+			if l != "" {
+				sb.WriteString("\n" + l)
+			}
+		}
+	}
+	return sb.String()
+}
+
 func (p *ProcessingItem) renderOutputSection(contentW int) string {
-	text := strings.TrimSpace(p.outputText)
+	text := strings.TrimSpace(p.OutputText())
 	if text == "" {
+		return ""
+	}
+	content := RenderFixed(WrapPlain(text, contentW), outputLines, true, p.sty.Subtle)
+	if content == "" {
 		return ""
 	}
 	var sb strings.Builder
@@ -114,12 +162,12 @@ func (p *ProcessingItem) renderOutputSection(contentW int) string {
 	sep := p.sty.Teal.Render("▍ output " + strings.Repeat("─", contentW-lipgloss.Width("▍ output ")))
 	sb.WriteString(sep)
 	sb.WriteString("\n\n")
-	sb.WriteString(RenderFixed(WrapPlain(text, contentW), outputLines, false, p.sty.Subtle))
+	sb.WriteString(content)
 	return sb.String()
 }
 
 func (p *ProcessingItem) renderReasoningSection(contentW int) string {
-	if p.reasoningText == "" {
+	if p.ReasoningText() == "" {
 		return ""
 	}
 	var sb strings.Builder
@@ -127,7 +175,6 @@ func (p *ProcessingItem) renderReasoningSection(contentW int) string {
 	sep := p.sty.Blue.Render("▍ reasoning " + strings.Repeat("─", contentW-lipgloss.Width("▍ reasoning ")))
 	sb.WriteString(sep)
 	sb.WriteString("\n\n")
-	sb.WriteString(RenderFixed(WrapPlain(p.reasoningText, contentW), reasonLines, false, p.sty.Muted))
+	sb.WriteString(RenderFixed(WrapPlain(p.ReasoningText(), contentW), reasonLines, false, p.sty.Muted))
 	return sb.String()
 }
-

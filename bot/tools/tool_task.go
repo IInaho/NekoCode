@@ -11,7 +11,7 @@ import (
 type SubAgentFunc func(ctx context.Context, prompt, agentType string) (string, error)
 
 type TaskTool struct {
-	run  SubAgentFunc
+	run   SubAgentFunc
 	names []string
 }
 
@@ -25,27 +25,27 @@ func (t *TaskTool) Wire(run SubAgentFunc, names []string) {
 	t.names = names
 }
 
-func (t *TaskTool) Name() string                                   { return "task" }
+func (t *TaskTool) Name() string                                       { return "task" }
 func (t *TaskTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *TaskTool) DangerLevel(map[string]interface{}) DangerLevel    { return LevelSafe }
+func (t *TaskTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
 func (t *TaskTool) Description() string {
-	return `重型工具：将复杂子任务委派给专用子 agent。简单文件写入请直接用 write——不要为每个操作 spawn subagent。
+	return `Heavy tool: delegate complex sub-tasks to specialized sub-agents. For simple file writes, use write directly — don't spawn a subagent for every operation.
 
-仅在以下场景使用：
-- executor：大型重构、多文件复杂改动（需要独立上下文和3+步推理）
-- explore：大规模代码库探索（需要3+轮搜索时）
-- verify：项目有测试套件且需要对抗性验证（边界值/并发/异常输入）。简单项目的 go build 请自己跑
-- plan：需要用户审批方案的场景
-- decompose：将大型方案拆解为并行子任务
+Use only in these scenarios:
+- executor: large refactors, complex multi-file changes (needs independent context and 3+ reasoning steps)
+- explore: large-scale codebase exploration (needs 3+ search rounds)
+- verify: project has tests and needs adversarial validation (edge cases/concurrency/malformed input). For simple go build, do it yourself
+- plan: when user needs to approve the approach
+- decompose: break large plans into parallel sub-tasks
 
-subagent 看不到对话历史，prompt 必须自包含。多个独立 task 一次发送即可并行执行。`
+Subagents can't see conversation history — prompts must be self-contained. Multiple independent tasks can be sent at once for parallel execution.`
 }
 
 func (t *TaskTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "description", Type: "string", Required: true, Description: "任务简述（必填，≤40字），如: 创建 types.go 类型定义"},
-		{Name: "prompt", Type: "string", Required: true, Description: "任务描述。必须自包含：子 agent 不知道你的对话历史、工具输出、文件内容。包含所有文件路径、代码上下文、错误信息、约束和期望输出格式。"},
-		{Name: "subagent_type", Type: "string", Required: false, Description: "子 agent 类型：plan / decompose / executor / verify / explore。默认 executor"},
+		{Name: "description", Type: "string", Required: true, Description: "Task summary (required, ≤40 chars), e.g. 'create types.go type definitions'"},
+		{Name: "prompt", Type: "string", Required: true, Description: "Task description. Must be self-contained: the sub-agent cannot see your conversation history, tool outputs, or file contents. Include all file paths, code context, error messages, constraints, and expected output format."},
+		{Name: "subagent_type", Type: "string", Required: false, Description: "Sub-agent type: plan / decompose / executor / verify / explore. Default: executor"},
 	}
 }
 
@@ -56,7 +56,7 @@ func (t *TaskTool) Execute(ctx context.Context, args map[string]interface{}) (st
 
 	prompt, ok := args["prompt"].(string)
 	if !ok || strings.TrimSpace(prompt) == "" {
-		return "", fmt.Errorf("缺少 prompt 参数")
+		return "", fmt.Errorf("missing prompt parameter")
 	}
 
 	// Enforce description: auto-generate if missing, truncate if too long.

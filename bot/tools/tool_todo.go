@@ -34,16 +34,16 @@ func (t *TodoWriteTool) SetUpdateFn(fn TodoFunc) {
 	t.onUpdate = fn
 }
 
-func (t *TodoWriteTool) Name() string                                   { return "todo_write" }
+func (t *TodoWriteTool) Name() string                                       { return "todo_write" }
 func (t *TodoWriteTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
-func (t *TodoWriteTool) DangerLevel(map[string]interface{}) DangerLevel    { return LevelSafe }
+func (t *TodoWriteTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
 func (t *TodoWriteTool) Description() string {
-	return `更新任务列表（仅记录，不负责规划）。每次调用完全替换列表。一次性写入完整列表，禁止多次追加。格式: [{"content":"...","status":"pending|in_progress|completed"}]`
+	return "Update the task list (record only, not for planning). Each call fully replaces the list. Write the complete list in one call — never append. Format: [{\"content\":\"...\",\"status\":\"pending|in_progress|completed\"}]"
 }
 
 func (t *TodoWriteTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "todos", Type: "string", Required: true, Description: "JSON 格式的任务列表：[{\"content\":\"...\",\"status\":\"pending|in_progress|completed\"}]"},
+		{Name: "todos", Type: "string", Required: true, Description: "JSON task list: [{\"content\":\"...\",\"status\":\"pending|in_progress|completed\"}]"},
 	}
 }
 
@@ -53,18 +53,18 @@ func (t *TodoWriteTool) Execute(ctx context.Context, args map[string]interface{}
 	switch v := args["todos"].(type) {
 	case string:
 		if v == "" {
-			return "", fmt.Errorf("缺少 todos 参数")
+			return "", fmt.Errorf("missing todos parameter")
 		}
 		if err := json.Unmarshal([]byte(v), &items); err != nil {
-			return "", fmt.Errorf("解析 todos 失败: %v", err)
+			return "", fmt.Errorf("failed to parse todos: %v", err)
 		}
 	case []interface{}:
 		raw, _ := json.Marshal(v)
 		if err := json.Unmarshal(raw, &items); err != nil {
-			return "", fmt.Errorf("解析 todos 失败: %v", err)
+			return "", fmt.Errorf("failed to parse todos: %v", err)
 		}
 	default:
-		return "", fmt.Errorf("todos 参数格式错误：需要 JSON 字符串或数组，收到 %T", args["todos"])
+		return "", fmt.Errorf("invalid todos format: expected JSON string or array, got %T", args["todos"])
 	}
 
 	t.mu.Lock()
@@ -78,12 +78,12 @@ func (t *TodoWriteTool) Execute(ctx context.Context, args map[string]interface{}
 
 	// Format a human-readable summary for the agent's context.
 	var b strings.Builder
-	fmt.Fprintf(&b, "任务列表已更新 (%d 项):\n", len(items))
+	fmt.Fprintf(&b, "Task list updated (%d items):\n", len(items))
 	for i, it := range items {
 		icon := map[string]string{
-			"pending":    "⬜",
+			"pending":     "⬜",
 			"in_progress": "🔄",
-			"completed":  "✅",
+			"completed":   "✅",
 		}[it.Status]
 		if icon == "" {
 			icon = "⬜"

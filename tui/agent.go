@@ -15,16 +15,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-const (
-	panicLogPattern = "primusbot-panic-%d.log"
-	filePerm        = 0644
-)
-
 func logPanic(r any) {
 	stack := debug.Stack()
-	path := fmt.Sprintf(panicLogPattern, time.Now().Unix())
+	path := fmt.Sprintf("primusbot-panic-%d.log", time.Now().Unix())
 	msg := fmt.Sprintf("PANIC: %v\n\nStack:\n%s", r, string(stack))
-	_ = os.WriteFile(path, []byte(msg), filePerm)
+	_ = os.WriteFile(path, []byte(msg), 0644)
 }
 
 func (m *Model) startChat(value string) tea.Cmd {
@@ -117,4 +112,3 @@ func tokensSummary(b BotInterface) string {
 	p, c := b.TokenUsage()
 	return "↑" + styles.FmtTokens(p) + " ↓" + styles.FmtTokens(c)
 }
-

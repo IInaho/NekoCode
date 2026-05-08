@@ -1,4 +1,4 @@
-// GlobTool 文件模式匹配，始终 LevelSafe 自动放行。
+// GlobTool — file pattern matching, always LevelSafe auto-approve.
 package tools
 
 import (
@@ -11,17 +11,17 @@ import (
 
 type GlobTool struct{}
 
-func (t *GlobTool) Name() string { return "glob" }
-	func (t *GlobTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
+func (t *GlobTool) Name() string                                       { return "glob" }
+func (t *GlobTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 
 func (t *GlobTool) Description() string {
-	return "文件模式匹配。ALWAYS 用 Glob，NEVER invoke find/ls as Bash。支持 ** 递归匹配，返回按修改时间排序的路径列表。"
+	return "File pattern matching. ALWAYS use Glob — NEVER invoke find/ls as Bash. Supports ** recursive matching. Returns file paths sorted by modification time."
 }
 
 func (t *GlobTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "pattern", Type: "string", Required: true, Description: "文件匹配模式"},
-		{Name: "path", Type: "string", Required: false, Description: "搜索目录，默认为当前目录"},
+		{Name: "pattern", Type: "string", Required: true, Description: "File matching pattern"},
+		{Name: "path", Type: "string", Required: false, Description: "Search directory, default: current directory"},
 	}
 }
 
@@ -45,25 +45,26 @@ func (t *GlobTool) Execute(ctx context.Context, args map[string]interface{}) (st
 		var err error
 		matches, err = globRecursive(basePath, pattern)
 		if err != nil {
-			return "", fmt.Errorf("glob 失败: %v", err)
+			return "", fmt.Errorf("glob failed: %v", err)
 		}
 	} else {
 		var err error
 		matches, err = filepath.Glob(filepath.Join(basePath, pattern))
 		if err != nil {
-			return "", fmt.Errorf("glob 失败: %v", err)
+			return "", fmt.Errorf("glob failed: %v", err)
 		}
 	}
 
 	if len(matches) == 0 {
-		return "未找到匹配的文件", nil
+		return "No matching files found", nil
 	}
 
-	var result string
+	var sb strings.Builder
 	for _, m := range matches {
-		result += m + "\n"
+		sb.WriteString(m)
+		sb.WriteByte('\n')
 	}
-	return result, nil
+	return sb.String(), nil
 }
 
 func globRecursive(basePath, pattern string) ([]string, error) {

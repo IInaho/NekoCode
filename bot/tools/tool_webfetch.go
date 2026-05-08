@@ -19,50 +19,50 @@ func NewWebFetchTool() *WebFetchTool {
 	c := NewToolHTTPClient(15 * time.Second)
 	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
-			return fmt.Errorf("重定向次数过多")
+			return fmt.Errorf("too many redirects")
 		}
 		return nil
 	}
 	return &WebFetchTool{client: c}
 }
 
-func (t *WebFetchTool) Name() string        { return "web_fetch" }
-	func (t *WebFetchTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *WebFetchTool) DangerLevel(map[string]interface{}) DangerLevel { return LevelSafe }
+func (t *WebFetchTool) Name() string                                       { return "web_fetch" }
+func (t *WebFetchTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
+func (t *WebFetchTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
 
 func (t *WebFetchTool) Description() string {
-	return "抓取网页内容并转换为文本，可用于读取文档、API 参考等"
+	return "Fetch web page content and convert to text. Useful for reading docs, API references, etc."
 }
 
 func (t *WebFetchTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "url", Type: "string", Required: true, Description: "要抓取的网页 URL"},
-		{Name: "prompt", Type: "string", Required: false, Description: "内容提取指导，如'提取 API 参数说明'"},
+		{Name: "url", Type: "string", Required: true, Description: "Web page URL to fetch"},
+		{Name: "prompt", Type: "string", Required: false, Description: "Content extraction hint, e.g. 'extract API parameters'"},
 	}
 }
 
 func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	rawURL, ok := args["url"].(string)
 	if !ok || strings.TrimSpace(rawURL) == "" {
-		return "", fmt.Errorf("缺少 url 参数")
+		return "", fmt.Errorf("missing url parameter")
 	}
 
 	if err := validateURL(rawURL); err != nil {
-		return "", fmt.Errorf("URL 校验失败: %v", err)
+		return "", fmt.Errorf("URL validation failed: %v", err)
 	}
 
 	prompt, _ := args["prompt"].(string)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("构建请求失败: %v", err)
+		return "", fmt.Errorf("failed to build request: %v", err)
 	}
 	req.Header.Set("User-Agent", "PrimusBot/1.0")
 	req.Header.Set("Accept", "text/html,text/plain,*/*")
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("请求失败: %v", err)
+		return "", fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -72,7 +72,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
-		return "", fmt.Errorf("读取响应失败: %v", err)
+		return "", fmt.Errorf("failed to read response: %v", err)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -86,7 +86,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 	content = StripAnsi(content)
 
 	if content == "" {
-		return "页面内容为空", nil
+		return "Page content is empty", nil
 	}
 
 	if prompt != "" {
@@ -100,29 +100,29 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 func validateURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("无效 URL: %v", err)
+		return fmt.Errorf("invalid URL: %v", err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("只允许 http/https 协议")
+		return fmt.Errorf("only http/https allowed")
 	}
 
 	host := u.Hostname()
 	if host == "" {
-		return fmt.Errorf("缺少主机名")
+		return fmt.Errorf("missing hostname")
 	}
 
 	if ip := net.ParseIP(host); ip != nil {
 		if isPrivateIP(ip) {
-			return fmt.Errorf("禁止访问内网地址")
+			return fmt.Errorf("private network access denied")
 		}
 	} else {
 		ips, err := net.LookupIP(host)
 		if err != nil {
-			return fmt.Errorf("DNS 解析失败: %v", err)
+			return fmt.Errorf("DNS lookup failed: %v", err)
 		}
 		for _, ip := range ips {
 			if isPrivateIP(ip) {
-				return fmt.Errorf("禁止访问内网地址")
+				return fmt.Errorf("private network access denied")
 			}
 		}
 	}

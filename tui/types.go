@@ -3,7 +3,6 @@ package tui
 
 import (
 	"primusbot/bot/tools"
-	"primusbot/bot/types"
 )
 
 // BotInterface is the contract any bot implementation must satisfy for the TUI.
@@ -12,10 +11,11 @@ type BotInterface interface {
 	ExecuteCommand(input string) (string, bool)
 	TokenUsage() (prompt, completion int)
 	ContextTokens() int
+	CompactCount() int
 	Duration() string
 	CommandNames() []string
-	SetConfirmFn(types.ConfirmFunc)
-	SetPhaseFn(types.PhaseFunc)
+	SetConfirmFn(tools.ConfirmFunc)
+	SetPhaseFn(tools.PhaseFunc)
 	Steer(msg string)
 	Abort()
 	SetStreamFn(fn func(delta string))
@@ -42,6 +42,5 @@ type doneMsg struct {
 }
 
 type confirmMsg struct {
-	req types.ConfirmRequest
+	req tools.ConfirmRequest
 }
-

@@ -1,33 +1,31 @@
-// GrepTool 基于 ripgrep 的内容搜索，返回匹配行及行号，支持正则和上下文。
+// GrepTool — content search via ripgrep. Returns matching lines with line numbers. Supports regex and context lines.
 package tools
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
 type GrepTool struct{}
 
-func (t *GrepTool) Name() string { return "grep" }
-	func (t *GrepTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-
+func (t *GrepTool) Name() string                                       { return "grep" }
+func (t *GrepTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
+func (t *GrepTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
 func (t *GrepTool) Description() string {
-	return "基于 ripgrep 的内容搜索。返回匹配行及行号。ALWAYS 用 Grep 搜索内容，NEVER invoke grep/rg as Bash。支持 full regex syntax，literal braces 需 escaping。支持 glob 过滤文件类型、-A/-B/-C context lines、multiline 模式。"
+	return "Content search via ripgrep. Returns matching lines with line numbers. ALWAYS use Grep — NEVER invoke grep/rg as Bash. Supports full regex syntax (literal braces need escaping). Supports glob filtering, -A/-B/-C context lines, multiline mode."
 }
 
 func (t *GrepTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "pattern", Type: "string", Required: true, Description: "搜索模式（正则表达式）"},
-		{Name: "path", Type: "string", Required: false, Description: "搜索目录，默认为当前目录"},
-		{Name: "glob", Type: "string", Required: false, Description: "文件过滤模式，如 *.go, *.py"},
-		{Name: "context_lines", Type: "string", Required: false, Description: "上下文行数，如 -A3, -B2, -C5 或数字(默认-C)"},
+		{Name: "pattern", Type: "string", Required: true, Description: "Search pattern (regex)"},
+		{Name: "path", Type: "string", Required: false, Description: "Directory to search, default: current directory"},
+		{Name: "glob", Type: "string", Required: false, Description: "File filter pattern, e.g. *.go, *.py"},
+		{Name: "context_lines", Type: "string", Required: false, Description: "Context lines, e.g. -A3, -B2, -C5 or a number (default -C)"},
 	}
-}
-
-func (t *GrepTool) DangerLevel(args map[string]interface{}) DangerLevel {
-	return LevelSafe
 }
 
 func (t *GrepTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -36,43 +34,39 @@ func (t *GrepTool) Execute(ctx context.Context, args map[string]interface{}) (st
 		return "", fmt.Errorf("missing pattern parameter")
 	}
 
-	cmdArgs := []string{"--line-number", "--no-heading", "--color=never", "--smart-case"}
-
-	glob, ok := args["glob"].(string)
-	if ok && glob != "" {
-		cmdArgs = append(cmdArgs, "--glob", glob)
+	basePath := "."
+	if p, ok := args["path"].(string); ok && p != "" {
+		basePath = p
 	}
 
-	ctxLines, ok := args["context_lines"].(string)
-	if ok && ctxLines != "" {
+	var grepArgs []string
+	grepArgs = append(grepArgs, "--no-heading", "-n")
+
+	if glob, ok := args["glob"].(string); ok && glob != "" {
+		grepArgs = append(grepArgs, "--glob", glob)
+	}
+
+	if ctxLines, ok := args["context_lines"].(string); ok && ctxLines != "" {
 		ctxLines = strings.TrimSpace(ctxLines)
-		if strings.HasPrefix(ctxLines, "-") {
-			cmdArgs = append(cmdArgs, strings.Fields(ctxLines)...)
-		} else if ctxLines == "0" || ctxLines == "all" {
-			// nothing
+		if _, err := strconv.Atoi(ctxLines); err == nil {
+			grepArgs = append(grepArgs, "-C", ctxLines)
 		} else {
-			cmdArgs = append(cmdArgs, "-C", ctxLines)
+			grepArgs = append(grepArgs, ctxLines)
 		}
 	}
 
-	searchPath := "."
-	if p, ok := args["path"].(string); ok && p != "" {
-		searchPath = p
-	}
+	grepArgs = append(grepArgs, "--", pattern, basePath)
 
-	cmdArgs = append(cmdArgs, "--", pattern, searchPath)
-
-	cmd := exec.CommandContext(ctx, "rg", cmdArgs...)
+	cmd := exec.CommandContext(ctx, "rg", grepArgs...)
+	cmd.Dir, _ = os.Getwd()
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 1 {
-				return "未找到匹配的内容", nil
-			}
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "No matches found", nil
 		}
-		return "", fmt.Errorf("grep 执行失败: %v\n输出: %s", err, string(output))
+		return "", fmt.Errorf("grep failed: %v\nOutput: %s", err, string(output))
 	}
 
-	return strings.TrimSpace(string(output)), nil
+	return StripAnsi(string(output)), nil
 }

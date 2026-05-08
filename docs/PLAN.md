@@ -18,14 +18,14 @@
 - EditTool diff 高亮着色（+绿/-红），嵌入工具卡片
 
 ### 4. 结构化内容块 (ContentBlock) ✅
-- block/ 子包：BlockType 枚举 + 5 种渲染 + FilterFinalBlocks
-- 仅 edit 工具显示 `[+]`/`[-]` 折叠
-- 所有块统一 2 字符缩进
-- `ctrl+e` 翻转 edit 工具块 Collapsed
+- block/ 子包：BlockType 枚举 + 渲染 + FilterFinalBlocks
+- 工具组折叠：同名单行工具收为一行 `[+]` 展开
+- Ctrl+E 切换组和 edit 块的折叠状态
+- `BuildToolGroups` 在 streaming 和 message 两侧共享
 
 ### 5. TUI-Bot 解耦 ✅
 - `BotInterface` 接口（17 个方法）
-- `bot/types` 共享类型包（Phase 常量统一定义）
+- Phase 类型和 Confirm 类型统一定义在 `bot/tools/`
 - Bot 通过接口暴露，TUI 零耦合
 
 ### 6. 项目感知上下文 🟡
@@ -33,108 +33,130 @@
 - ❌ CLAUDE.md / AGENTS.md 读取
 - ❌ .gitignore 排除
 
-### 7. Skills / Extensions 系统 ✅
-- Extension 接口：Tools() + Commands()
-- 命令注册/分发机制
-
-### 8. Web Search / Fetch ✅
-- `web_search`：Exa MCP 优先 → Bing HTML 降级
-- `web_fetch`：HTML→Markdown + DNS 安全校验
-- Exa API key 通过 Header 传递（不在 URL query）
+### 7. Web Search / Fetch ✅
+- `web_search`：Exa MCP（JSON-RPC over SSE）
+- `web_fetch`：HTML→Markdown + DNS 校验 + 内网 IP 拒绝
 
 ---
 
 ## P1 — 架构增强
 
-### 9. Provider 合并 ✅
+### 8. Provider 合并 ✅
 - OpenAI / GLM / DeepSeek → `OpenAICompatible`
 - Anthropic SSE 流式解析 content_block_start/delta
-- `disableThinking` 接入 API 请求体（子 agent 关闭 thinking）
+- `disableThinking` 接入 API 请求体
 
-### 10. 上下文窗口优化 ✅
-- ctxmgr 拆分为 4 文件：manager / storage / token / summarize
+### 9. 上下文窗口优化 ✅
+- ctxmgr 拆分为 5 文件：manager / compact / storage / token / summarize
 - 语言感知 token 估算（CJK ~1.5/token, ASCII ~4/token）
 - Build() 保护 tool_calls/tool_result 配对
-- 结构化摘要：目标/进展/关键决策/下一步/关键上下文/相关文件，增量更新
+- 结构化摘要：Goal/Progress/Key Decisions/Next Steps/Critical Context/Relevant Files，增量更新
 
-### 11. 共享 HTTP 客户端 ✅
+### 10. 微压缩 ✅
+- 清除旧 compactable 工具结果（read、bash、grep、glob、web_*、edit、write）
+- 保留最近 5 个，替换为 `[Old tool result cleared]`
+- **仅在 token > 50% 预算时激活**——探索期不丢上下文
+- 状态栏显示 `🧹N` 累计计数
+
+### 11. Session Memory ✅
+- 异步提取：goroutine 方式，10k+ token 开始，+5k token + 3 tool call 再触发
+- 10 section Markdown 文件：`~/.primusbot/sessions/<id>/memory.md`
+- `/new` 命令用 session memory 做免费摘要（不调 API）
+
+### 12. Snip 工具 ✅
+- 模型通过 `snip` 工具主动移除旧消息范围
+- `[id:N]` 标签仅在 API 侧注入，用户不可见
+- 被 snipped 的消息在后续 Build() 中过滤
+
+### 13. `/new` 命令 ✅
+- 开始新对话，保留上一任务摘要
+- 优先用 session memory，fallback 到 API summarizer
+
+### 14. 共享 HTTP 客户端 ✅
 - `SharedHTTPClient` + `SharedHTTPClientTimeout`
-- 底层 Transport 连接池复用
+- Transport 连接池复用
 
-### 12. 确认框重构 ✅
+### 15. 确认框 ✅
 - 卡片式布局：Tool / File / Level + Prompt
 
-### 13. ANSI 转义序列清理 ✅
-- `StripAnsi` 导出函数，bash/webfetch 全面覆盖
+### 16. ANSI 清理 ✅
+- `StripAnsi` 在 util.go，bash/webfetch 全面覆盖
 
-### 14. 并行工具执行 ✅
-- executor `ExecuteBatch` 根据 ExecutionMode 串行/并行
+### 17. 并行工具执行 ✅
+- Executor `ExecuteBatch`：partition + parallel/serial + danger check
 - worker pool 上限 10
-- 并行前 ctx 取消检查
+- subagent 共享同一个 Executor
 
-### 15. 处理阶段独立模块 ✅
-- `phase.go`：Phase 常量在 `bot/types` 统一定义，agent 和 TUI 两边引用
+### 18. 处理阶段 ✅
+- `tools.Phase*` 常量 agent 和 TUI 统一引用
 
-### 16. Scrollbar 独立组件 ✅
+### 19. Scrollbar 独立组件 ✅
 
-### 16a. BTW 中断机制 ✅
+### 20. BTW 中断机制 ✅
 - Processing 中直接打字 + Enter 注入新消息并打断当前 LLM 调用
-- Esc 纯 Abort，返回"已中断"
+- Esc 纯 Abort，返回 "Interrupted"
 - `replaceCtx()` 使用 `parentCtx` 保持取消链
 
-### 16b. 指数退避重试 ✅
+### 21. 指数退避重试 ✅
 - `bot/agent/retry.go`：LLM 调用失败自动重试
 - 0.5s→1s→2s→4s→8s（最多 4 次）
 - token 统计防重复累加
 
-### 16c. 模块重组 ✅
-- ctxmgr 移入 `bot/ctxmgr/`，Phase 常量移入 `bot/types/`
+### 22. 模块重组 ✅
+- 删除 `bot/types/`（类型移入 `bot/tools/`）
+- 删除 `bot/extensions/`（YAGNI，无实现）
+- 拆分 `bot/config.go` → `config.go` + `commands.go`
+- 拆分 `bot/tools/tool.go` → `tool.go` + `util.go` + `descriptor.go` + `confirm.go` + `executor.go`
+- `Executor` 从 `bot/agent/` 移入 `bot/tools/`（subagent 共享）
 - TUI 拆分为 block/message/processing 子包
-- 目录结构精简（subagent 合并 agents.go，config+command 合并）
 
-### 17. 子 Agent 系统 ✅
-- 5 种内置子 agent：executor / verify / explore / plan / decompose
-- 独立 Engine（不依赖主 agent 包，避免循环依赖）
+### 23. 子 Agent 系统 ✅
+- 5 种内置类型：executor / verify / explore / plan / decompose
+- 独立 Engine，共享 `tools.Executor`
 - disableThinking=true（API 级 + prompt 级）
 - 上下文隔离（每次创建新 ctxmgr）
-- Run 循环 ctx 取消检查
 
-### 18. 任务列表 (Todo tracking) ✅
+### 24. 任务列表 (Todo tracking) ✅
 - `todo_write` 工具：记录任务状态
 - TUI 实时显示进度，注入 agent 上下文
 
-### 19. 代码质量 ✅
-- 全项目死代码清理（BlockStream、channel streaming、duplicate fmtTokens 等）
+### 25. 代码质量 ✅
+- 死代码清理（ParseCall/unquote、extensions package、NeedFreshStart、SystemPrompt）
 - 路径穿越防护（validatePath）
-- 不安全类型断言修复
+- 工具描述和系统提示词全英文化（人设部分保留中文）
 - Go vet 零警告
 
-### 20. 文档更新 ✅
+### 26. 输出噪声过滤 ✅
+- `isEmptyOrNoise()` 过滤纯空白、纯点号、纯符号行
+- 全部噪声时 output 块不渲染
+- LLM 流式产出的空白不再显示为空白 output 区块
+
+### 27. 文档更新 ✅
 - ARCHITECTURE.md / DESIGN.md / PLAN.md 反映当前项目状态
 
 ---
 
 ## P2 — 生态与体验
 
-### 21. 后台任务 + 进度
+### 28. 后台任务 + 进度
 - 长运行命令流式输出，不阻塞主 Agent 循环
 
-### 22. Checkpoint / Undo
+### 29. Checkpoint / Undo
 - 每次工具写入前自动保存快照
 - `/undo` 命令回滚
 
-### 23. MCP 协议支持
+### 30. MCP 协议支持
 - MCP client，连接外部 tool server
 
-### 24. Session 管理
+### 31. Session 管理
 - 对话存档/恢复，支持分支对话
 
-### 25. Plan 模式
+### 32. Plan 模式
 - 复杂改动先出方案文本，用户审批后执行
 
-### 26. 凭证管理
+### 33. 凭证管理
 - API key 安全存储，多 profile 切换
 
-### 27. 自动化测试
+### 34. 自动化测试
 - Agent 行为回归测试（mock LLM 响应）
 - 工具执行单元测试（mock 文件系统/shell）

@@ -4,49 +4,64 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type ListTool struct{}
 
-func (t *ListTool) Name() string                                   { return "list" }
+func (t *ListTool) Name() string                                       { return "list" }
 func (t *ListTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *ListTool) DangerLevel(map[string]interface{}) DangerLevel    { return LevelSafe }
+func (t *ListTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
 func (t *ListTool) Description() string {
-	return "列出目录内容。ALWAYS 用 List，NEVER invoke ls as Bash。返回按名称排序的文件和子目录列表。"
+	return "List directory contents. ALWAYS use List — NEVER invoke ls as Bash. Returns files and subdirectories sorted by name."
 }
 
 func (t *ListTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "path", Type: "string", Required: true, Description: "要列出内容的目录路径"},
+		{Name: "path", Type: "string", Required: true, Description: "Directory path to list"},
 	}
 }
 
 func (t *ListTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	path, _ := args["path"].(string)
 	if path == "" {
-		return "", fmt.Errorf("缺少 path 参数")
+		return "", fmt.Errorf("missing path parameter")
 	}
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return "", fmt.Errorf("读取目录失败: %v", err)
+		return "", fmt.Errorf("failed to read directory: %v", err)
 	}
 
-	var result string
+	var sb strings.Builder
 	for _, e := range entries {
 		if e.IsDir() {
-			result += fmt.Sprintf("▸ %s/\n", e.Name())
+			fmt.Fprintf(&sb, "▸ %s/\n", e.Name())
 		} else {
 			info, err := e.Info()
-				if err != nil {
-					result += fmt.Sprintf("  %s\n", e.Name())
-				} else {
-			result += fmt.Sprintf("  %s  %s\n", e.Name(), humanSize(info.Size()))
-				}
+			if err != nil {
+				fmt.Fprintf(&sb, "  %s\n", e.Name())
+			} else {
+				fmt.Fprintf(&sb, "  %s  %s\n", e.Name(), humanSize(info.Size()))
+			}
 		}
 	}
+	result := sb.String()
 	if result == "" {
-		result = "(空目录)"
+		result = "(empty)"
 	}
 	return result, nil
+}
+
+func humanSize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1fM", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1fK", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
 }

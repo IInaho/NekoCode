@@ -12,12 +12,12 @@ type AgentType struct {
 
 // RunConfig is the input contract for the engine.
 type RunConfig struct {
-	Prompt          string             // the sub-agent's task description
-	AgentType       AgentType          // which agent profile to use
-	Cwd             string             // working directory
-	OnPhase         func(phase string) // optional: phase changes (Thinking/Running/done)
+	Prompt          string                  // the sub-agent's task description
+	AgentType       AgentType               // which agent profile to use
+	Cwd             string                  // working directory
+	OnPhase         func(phase string)      // optional: phase changes (Thinking/Running/done)
 	AddTokens       func(prompt, compl int) // optional: token usage callback
-	DisableThinking bool               // append conciseness directive for sub-agents
+	DisableThinking bool                    // append conciseness directive for sub-agents
 }
 
 var builtins = map[string]AgentType{}

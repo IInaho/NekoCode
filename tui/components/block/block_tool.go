@@ -11,9 +11,6 @@ import (
 
 func renderToolLine(b ContentBlock, width int, sty *styles.Styles) string {
 	icon := "◆"
-	if b.BatchTotal > 1 {
-		icon = "⚡"
-	}
 	args := b.ToolArgs
 	if b.BatchTotal > 1 {
 		args = fmt.Sprintf("(%d/%d) %s", b.BatchIdx, b.BatchTotal, b.ToolArgs)

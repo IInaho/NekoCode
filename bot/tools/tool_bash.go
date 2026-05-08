@@ -1,6 +1,6 @@
-// BashTool 执行 Shell 命令。DangerLevel 按命令关键词自动分级：
-// forbidden（sudo/eval/ssh）→ 拒绝，destructive（rm/kill/shutdown）→ 确认，
-// write（mkdir/cp/git commit）→ 确认，其余 → 自动放行。
+// BashTool — execute shell commands. DangerLevel auto-classified by command keywords:
+// forbidden (sudo/eval/ssh) -> reject, destructive (rm/kill/shutdown) -> confirm,
+// write (mkdir/cp/git commit) -> confirm, rest -> auto-approve.
 package tools
 
 import (
@@ -13,29 +13,29 @@ import (
 
 type BashTool struct{}
 
-func (t *BashTool) Name() string { return "bash" }
-	func (t *BashTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
+func (t *BashTool) Name() string                                       { return "bash" }
+func (t *BashTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
 
 func (t *BashTool) Description() string {
-	return `执行 shell 命令。
+	return `Execute shell commands.
 
-IMPORTANT: 避免用此工具运行 find、grep、cat、head、tail、sed、awk、echo——用专用工具替代：
-- 文件搜索: Glob (不用 find/ls)
-- 内容搜索: Grep (不用 grep/rg)
-- 读文件: Read (不用 cat/head/tail)
-- 编辑文件: Edit (不用 sed/awk)
-- 写文件: Write (不用 echo >/cat <<EOF)
+IMPORTANT: Avoid using this tool for find, grep, cat, head, tail, sed, awk, echo — use dedicated tools instead:
+- File search: Glob (not find/ls)
+- Content search: Grep (not grep/rg)
+- Read files: Read (not cat/head/tail)
+- Edit files: Edit (not sed/awk)
+- Write files: Write (not echo >/cat <<EOF)
 
-规则:
-- 创建目录/文件前验证父目录存在。用绝对路径，避免 cd
-- 用 && 串联依赖命令。NEVER 用 newlines 分隔命令
+Rules:
+- Verify parent directory exists before creating files/dirs. Use absolute paths, avoid cd
+- Chain dependent commands with &&. NEVER use newlines to separate commands
 - Git: NEVER update git config, NEVER skip hooks (--no-verify), NEVER force push to main/master
-- CRITICAL: 始终创建 NEW commit，不要 amend`
+- CRITICAL: Always create NEW commits, never amend`
 }
 
 func (t *BashTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "command", Type: "string", Required: true, Description: "要执行的命令"},
+		{Name: "command", Type: "string", Required: true, Description: "The command to execute"},
 	}
 }
 
@@ -44,7 +44,7 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 	cmd = strings.TrimSpace(cmd)
 
 	if matchAny(cmd, []string{
-		"sudo", "eval", "curl", "wget", "nc ", "ncat",
+		"sudo", "eval", "nc ", "ncat",
 		"telnet", "ssh ", "scp ", "nohup", "disown",
 		"> /dev/", "mkfs", "dd ", "chown", "chmod 777",
 		"| bash", "| sh", "|bash", "|sh",
@@ -53,7 +53,7 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 	}
 
 	if matchAny(cmd, []string{
-		"rm ", "rmdir", "chmod ", "chown ", "kill", "pkill",
+		"curl", "wget", "rm ", "rmdir", "chmod ", "chown ", "kill", "pkill",
 		"shutdown", "reboot", "mv ", "git push", "git reset --hard",
 		"docker rm", "docker rmi",
 	}) {
@@ -61,7 +61,7 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 	}
 
 	if matchAny(cmd, []string{
-		"mkdir", "touch ", "cp ", "mv ", "tar ", "zip ",
+		"mkdir", "touch ", "cp ", "tar ", "zip ",
 		"gzip ", "git commit", "git add", "pip install", "npm install",
 		"go install", "cargo install", "make ", "docker build",
 	}) {
@@ -95,7 +95,7 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	cleaned := StripAnsi(string(output))
 
 	if err != nil {
-		return "", fmt.Errorf("命令执行失败: %v\n输出: %s", err, cleaned)
+		return "", fmt.Errorf("command failed: %v\nOutput: %s", err, cleaned)
 	}
 
 	return cleaned, nil

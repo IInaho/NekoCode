@@ -80,12 +80,16 @@ type anthropicResponse struct {
 // --- Anthropic SSE streaming types ---
 
 type anthropicSSEEvent struct {
-	Type  string          `json:"type"`
-	Index int             `json:"index"`
-	Delta json.RawMessage `json:"delta"`
+	Type    string          `json:"type"`
+	Index   int             `json:"index"`
+	Delta   json.RawMessage `json:"delta"`
+	Message struct {
+		Usage struct {
+			InputTokens int `json:"input_tokens"`
+		} `json:"usage"`
+	} `json:"message"`
 	Usage *struct {
 		OutputTokens int `json:"output_tokens"`
-		InputTokens  int `json:"input_tokens"`
 	} `json:"usage"`
 	ContentBlock json.RawMessage `json:"content_block"`
 }
@@ -308,6 +312,12 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 			}
 
 			switch event.Type {
+			case "message_start":
+				if event.Message.Usage.InputTokens > 0 {
+					tokenChan <- StreamToken{
+						Usage: &StreamUsage{PromptTokens: event.Message.Usage.InputTokens},
+					}
+				}
 			case "content_block_start":
 				var cb anthropicContentBlock
 				if err := json.Unmarshal(event.ContentBlock, &cb); err != nil {
@@ -344,12 +354,9 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 				}
 
 			case "message_delta":
-				if event.Usage != nil && (event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0) {
+				if event.Usage != nil && event.Usage.OutputTokens > 0 {
 					tokenChan <- StreamToken{
-						Usage: &StreamUsage{
-							PromptTokens:     event.Usage.InputTokens,
-							CompletionTokens: event.Usage.OutputTokens,
-						},
+						Usage: &StreamUsage{CompletionTokens: event.Usage.OutputTokens},
 					}
 				}
 			}

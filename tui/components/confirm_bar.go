@@ -5,14 +5,13 @@ import (
 	"strings"
 
 	"primusbot/bot/tools"
-	"primusbot/bot/types"
 	"primusbot/tui/styles"
 
 	"charm.land/lipgloss/v2"
 )
 
 type ConfirmBar struct {
-	req *types.ConfirmRequest
+	req *tools.ConfirmRequest
 	sty *styles.Styles
 }
 
@@ -20,7 +19,7 @@ func NewConfirmBar(sty *styles.Styles) *ConfirmBar {
 	return &ConfirmBar{sty: sty}
 }
 
-func (c *ConfirmBar) SetRequest(req *types.ConfirmRequest) { c.req = req }
+func (c *ConfirmBar) SetRequest(req *tools.ConfirmRequest) { c.req = req }
 func (c *ConfirmBar) Clear()                                { c.req = nil }
 func (c *ConfirmBar) Respond(ok bool)                         { c.req.Response <- ok; c.req = nil }
 

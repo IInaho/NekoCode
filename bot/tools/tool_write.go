@@ -9,17 +9,17 @@ import (
 
 type WriteTool struct{}
 
-func (t *WriteTool) Name() string                                   { return "write" }
+func (t *WriteTool) Name() string                                       { return "write" }
 func (t *WriteTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
-func (t *WriteTool) DangerLevel(map[string]interface{}) DangerLevel    { return LevelWrite }
+func (t *WriteTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelWrite }
 func (t *WriteTool) Description() string {
-	return "创建或覆盖文件。MUST Read existing file first（否则失败）。Prefer Edit for modifications。NEVER create documentation files (*.md) or README。自动创建父目录。"
+	return "Create or overwrite a file. MUST Read existing file first (or will fail). Prefer Edit for modifications. NEVER create documentation files (*.md) or README. Auto-creates parent directories."
 }
 
 func (t *WriteTool) Parameters() []Parameter {
 	return []Parameter{
-		{Name: "path", Type: "string", Required: true, Description: "文件路径"},
-		{Name: "content", Type: "string", Required: true, Description: "要写入的内容"},
+		{Name: "path", Type: "string", Required: true, Description: "File path"},
+		{Name: "content", Type: "string", Required: true, Description: "Content to write"},
 	}
 }
 
@@ -27,7 +27,7 @@ func (t *WriteTool) Execute(ctx context.Context, args map[string]interface{}) (s
 	path, _ := args["path"].(string)
 	content, _ := args["content"].(string)
 	if path == "" {
-		return "", fmt.Errorf("缺少 path 参数")
+		return "", fmt.Errorf("missing path parameter")
 	}
 
 	safePath, err := validatePath(path)
@@ -36,10 +36,10 @@ func (t *WriteTool) Execute(ctx context.Context, args map[string]interface{}) (s
 	}
 
 	if err := os.MkdirAll(filepath.Dir(safePath), 0755); err != nil {
-		return "", fmt.Errorf("创建目录失败: %v", err)
+		return "", fmt.Errorf("failed to create directory: %v", err)
 	}
 	if err := os.WriteFile(safePath, []byte(content), 0644); err != nil {
-		return "", fmt.Errorf("写入文件失败: %v", err)
+		return "", fmt.Errorf("failed to write file: %v", err)
 	}
-	return fmt.Sprintf("已写入: %s (%d 字符)", safePath, len(content)), nil
+	return fmt.Sprintf("Written: %s (%d chars)", safePath, len(content)), nil
 }

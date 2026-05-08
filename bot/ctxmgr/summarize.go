@@ -14,7 +14,8 @@ func (m *Manager) NeedsSummarization() bool {
 	if m.summarizer == nil || len(m.messages) <= m.windowSize {
 		return false
 	}
-	return m.estimatedTokens() > m.tokenBudget/2
+	// Trigger at 80% since micro-compaction handles tool-result bloat first.
+	return m.estimatedTokens() > m.tokenBudget*8/10
 }
 
 // Summarize compresses the oldest messages via the configured summarizer.
@@ -46,8 +47,6 @@ func (m *Manager) Summarize() error {
 }
 
 // BuildPrompt assembles a structured summarization prompt from messages.
-// Emulates opencode's compaction: incremental update of structured summary
-// with Goal / Progress / Key Decisions / Next Steps / Critical Context / Relevant Files.
 func BuildPrompt(msgs []llm.Message, prevSummary string) string {
 	var b strings.Builder
 	for _, m := range msgs {
@@ -67,31 +66,31 @@ Keep each section concise.
 
 Output in this exact format:
 
-[目标]
-用户正在完成的目标是什么（1-2句话）
+[Goal]
+What is the user trying to accomplish (1-2 sentences)
 
-[进展]
-已完成：已解决或已完成的步骤
-进行中：正在进行的工作
-阻塞：当前遇到的阻塞或障碍
+[Progress]
+Done: steps that have been resolved or completed
+In Progress: work currently being done
+Blocked: current blockers or obstacles
 
-[关键决策]
-重要的技术选型、架构决策或妥协方案
+[Key Decisions]
+Important technical choices, architecture decisions, or trade-offs
 
-[下一步]
-接下来应当执行的操作步骤
+[Next Steps]
+What actions should be taken next
 
-[关键上下文]
-用户偏好、约束条件、环境信息等必须记住的上下文
+[Critical Context]
+User preferences, constraints, environment info that must be remembered
 
-[相关文件]
-按重要性排列的关键文件路径列表，标注其作用`
+[Relevant Files]
+Key file paths ordered by importance, with notes on their role`
 
 	if prevSummary != "" {
-		return fmt.Sprintf("%s\n\n[当前摘要]\n%s\n\n[新对话]\n%s\n\n[更新后的结构化摘要]:",
+		return fmt.Sprintf("%s\n\n[Previous Summary]\n%s\n\n[New Conversation]\n%s\n\n[Updated Structured Summary]:",
 			template, prevSummary, conversation)
 	}
-	return fmt.Sprintf("%s\n\n[对话]\n%s\n\n[结构化摘要]:", template, conversation)
+	return fmt.Sprintf("%s\n\n[Conversation]\n%s\n\n[Structured Summary]:", template, conversation)
 }
 
 func truncateStr(s string, n int) string {
