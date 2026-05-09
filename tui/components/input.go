@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"primusbot/tui/styles"
+	"nekocode/tui/styles"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"

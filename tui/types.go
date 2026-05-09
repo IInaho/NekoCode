@@ -2,7 +2,7 @@
 package tui
 
 import (
-	"primusbot/bot/tools"
+	"nekocode/bot/tools"
 )
 
 // BotInterface is the contract any bot implementation must satisfy for the TUI.

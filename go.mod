@@ -1,4 +1,4 @@
-module primusbot
+module nekocode
 
 go 1.25.8
 

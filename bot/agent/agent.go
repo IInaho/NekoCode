@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"primusbot/bot/ctxmgr"
-	"primusbot/bot/tools"
-	"primusbot/llm"
+	"nekocode/bot/ctxmgr"
+	"nekocode/bot/tools"
+	"nekocode/llm"
 )
 
 // StopInfo is passed to ShouldStopFunc, mirroring Pi's ShouldStopAfterTurnContext.

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"primusbot/bot/tools"
-	"primusbot/tui/components"
-	"primusbot/tui/styles"
+	"nekocode/bot/tools"
+	"nekocode/tui/components"
+	"nekocode/tui/styles"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"

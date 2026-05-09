@@ -3,7 +3,7 @@ package components
 import (
 	"strings"
 
-	"primusbot/tui/styles"
+	"nekocode/tui/styles"
 )
 
 type Suggestions struct {

@@ -1,4 +1,4 @@
-// config.go — 配置加载（~/.primusbot/config.json）。
+// config.go — 配置加载（~/.nekocode/config.json）。
 package bot
 
 import (
@@ -32,7 +32,7 @@ func LoadConfig() (*Config, error) {
 		return &DefaultConfig, nil
 	}
 
-	configPath := filepath.Join(homeDir, ".primusbot", "config.json")
+	configPath := filepath.Join(homeDir, ".nekocode", "config.json")
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {

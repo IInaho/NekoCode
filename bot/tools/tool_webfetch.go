@@ -57,7 +57,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 	if err != nil {
 		return "", fmt.Errorf("failed to build request: %v", err)
 	}
-	req.Header.Set("User-Agent", "PrimusBot/1.0")
+	req.Header.Set("User-Agent", "NekoCode/1.0")
 	req.Header.Set("Accept", "text/html,text/plain,*/*")
 
 	resp, err := t.client.Do(req)

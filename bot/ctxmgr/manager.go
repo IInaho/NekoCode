@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"primusbot/llm"
+	"nekocode/llm"
 )
 
 type Summarizer func(msgs []llm.Message, prevSummary string) (string, error)

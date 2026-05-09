@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"primusbot/tui/styles"
+	"nekocode/tui/styles"
 
 	"charm.land/lipgloss/v2"
 )
@@ -108,7 +108,7 @@ func (s *Splash) renderCat() string {
 }
 
 func (s *Splash) renderTitle() string {
-	titleLine := styles.PrimaryStyle.Bold(true).Render("P R I M U S")
+	titleLine := styles.PrimaryStyle.Bold(true).Render("N E K O C O D E")
 	versionLine := styles.SubtleStyle.Render(fmt.Sprintf("v%s", s.version))
 	return titleLine + "\n" + versionLine
 }

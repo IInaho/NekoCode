@@ -3,7 +3,7 @@ package ctxmgr
 import (
 	"unicode"
 
-	"primusbot/llm"
+	"nekocode/llm"
 )
 
 // estimatedTokens must be called with the lock held.

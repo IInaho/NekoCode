@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"primusbot/tui/components/processing"
+	"nekocode/tui/components/processing"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"

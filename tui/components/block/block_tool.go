@@ -4,7 +4,7 @@ package block
 import (
 	"fmt"
 
-	"primusbot/tui/styles"
+	"nekocode/tui/styles"
 
 	"charm.land/lipgloss/v2"
 )

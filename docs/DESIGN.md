@@ -1,10 +1,10 @@
-# PrimusBot 设计文档
+# NekoCode 设计文档
 
 > **本文档职责**: 描述产品设计——UI 布局、交互模式、视觉主题、Agent 能力设计、上下文管理策略、防幻觉设计原则。不包含代码实现细节、文件路径、函数名等属于 ARCHITECTURE.md 的内容。更新时请保持此边界。
 
 ## 产品定位
 
-PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、执行本地操作（文件读写、Shell 命令、文件搜索），并在执行可能有影响的操作前征求用户确认。
+NekoCode 是一个运行在终端中的 AI 助手。它能理解自然语言、执行本地操作（文件读写、Shell 命令、文件搜索），并在执行可能有影响的操作前征求用户确认。
 
 核心体验：**像和一位终端里的伙伴聊天一样，自然地交代任务，它帮你完成。**
 
@@ -60,7 +60,7 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
         (_|     |_)
            || ||
 
-           PRIMUS
+         NEKOCODE
           v0.2.0
 
       ──── ◆ ────
@@ -73,7 +73,7 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 ### 聊天界面布局（厚左色条）
 
 ```
-(=^.^=) PRIMUS v0.2.0 · anthropic/claude
+(=^.^=) NEKOCODE v0.2.0 · anthropic/claude
 
 ▐ You                                                        ┃
 ▐ 帮我分析下项目架构                                           ┃
@@ -153,7 +153,7 @@ Confirm
 
 ### Session Memory
 
-上下文超过 10k token 后开始异步提取，每 +5k token + 3 个 tool call 再次触发。提取内容写入 `~/.primusbot/sessions/<id>/memory.md`（10 section Markdown 文件）。`/new` 命令优先用 session memory 作为免费摘要。
+上下文超过 10k token 后开始异步提取，每 +5k token + 3 个 tool call 再次触发。提取内容写入 `~/.nekocode/sessions/<id>/memory.md`（10 section Markdown 文件）。`/new` 命令优先用 session memory 作为免费摘要。
 
 ## Agent 能力
 
@@ -252,5 +252,5 @@ bash 命令按关键词智能分级，三层判断：
 ## 非交互模式
 
 ```bash
-primusbot "帮我看看当前目录有什么文件"
+nekocode "帮我看看当前目录有什么文件"
 ```

@@ -4,7 +4,7 @@ package block
 import (
 	"strings"
 
-	"primusbot/tui/styles"
+	"nekocode/tui/styles"
 )
 
 func renderBlockThought(b ContentBlock, sty *styles.Styles) string {

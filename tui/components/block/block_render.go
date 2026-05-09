@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"primusbot/tui/styles"
+	"nekocode/tui/styles"
 
 	"charm.land/lipgloss/v2"
 )

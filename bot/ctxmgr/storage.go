@@ -1,6 +1,6 @@
 package ctxmgr
 
-import "primusbot/llm"
+import "nekocode/llm"
 
 func (m *Manager) Add(role, content string) {
 	m.mu.Lock()

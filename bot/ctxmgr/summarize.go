@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"primusbot/llm"
+	"nekocode/llm"
 )
 
 // NeedsSummarization returns true when messages should be compressed.

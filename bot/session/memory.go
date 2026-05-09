@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	"primusbot/bot/ctxmgr"
-	"primusbot/llm"
+	"nekocode/bot/ctxmgr"
+	"nekocode/llm"
 )
 
 //go:embed memory_template.md
@@ -53,7 +53,7 @@ func New(sessionID, template string) (*Memory, error) {
 	if err != nil {
 		home = "/tmp"
 	}
-	dir := filepath.Join(home, ".primusbot", "sessions", sessionID)
+	dir := filepath.Join(home, ".nekocode", "sessions", sessionID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("session memory: mkdir: %w", err)
 	}

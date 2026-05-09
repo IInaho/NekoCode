@@ -4,9 +4,9 @@ package tui
 import (
 	"fmt"
 
-	"primusbot/tui/components/block"
+	"nekocode/tui/components/block"
 	tea "charm.land/bubbletea/v2"
-	"primusbot/tui/components/message"
+	"nekocode/tui/components/message"
 )
 
 func (m *Model) handleDone(msg doneMsg) tea.Cmd {

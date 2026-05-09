@@ -3,8 +3,8 @@ package tui
 import (
 	"fmt"
 
-	"primusbot/bot"
-	"primusbot/tui/styles"
+	"nekocode/bot"
+	"nekocode/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 )

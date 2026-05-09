@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"primusbot/bot/tools"
+	"nekocode/bot/tools"
 )
 
 func formatBriefArgs(toolName, toolArgs string) string {

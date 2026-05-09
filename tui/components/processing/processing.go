@@ -4,8 +4,8 @@ package processing
 import (
 	"strings"
 
-	"primusbot/tui/components/block"
-	"primusbot/tui/styles"
+	"nekocode/tui/components/block"
+	"nekocode/tui/styles"
 )
 
 const (

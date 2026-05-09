@@ -1,7 +1,7 @@
 // descriptor.go — Descriptor 到 LLM ToolDef 的转换。
 package tools
 
-import "primusbot/llm"
+import "nekocode/llm"
 
 // ToToolDefs converts tool descriptors to LLM tool definitions.
 func ToToolDefs(descs []Descriptor) []llm.ToolDef {

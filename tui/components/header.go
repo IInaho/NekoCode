@@ -3,7 +3,7 @@ package components
 import (
 	"strings"
 
-	"primusbot/tui/styles"
+	"nekocode/tui/styles"
 
 	"charm.land/lipgloss/v2"
 )
@@ -33,7 +33,7 @@ func (h *Header) View() string {
 	w := max(20, h.Width)
 
 	catIcon := styles.CatBodyStyle.Render("(=") + styles.CatEyeStyle.Render("^.^") + styles.CatBodyStyle.Render("=)")
-	left := catIcon + " " + styles.PrimaryStyle.Bold(true).Render("PRIMUS") + " " + styles.SubtleStyle.Render("v"+h.Version)
+	left := catIcon + " " + styles.PrimaryStyle.Bold(true).Render("NEKOCODE") + " " + styles.SubtleStyle.Render("v"+h.Version)
 	right := styles.MutedStyle.Render(h.Provider + "/" + h.Model)
 	dot := styles.BorderStyle.Render(" · ")
 

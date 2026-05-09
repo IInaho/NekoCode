@@ -4,10 +4,10 @@ package components
 import (
 	"sync"
 
-	"primusbot/tui/components/block"
-	"primusbot/tui/components/processing"
-	"primusbot/tui/components/message"
-	"primusbot/tui/styles"
+	"nekocode/tui/components/block"
+	"nekocode/tui/components/processing"
+	"nekocode/tui/components/message"
+	"nekocode/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 )

@@ -1,4 +1,4 @@
-# PrimusBot 开发路线
+# NekoCode 开发路线
 
 > **本文档职责**: 追踪已完成和待办的功能项。记录开发里程碑、实施状态（✅/🟡）。每项简要描述功能目标，不展开设计或架构细节（细节属于 DESIGN.md / ARCHITECTURE.md）。更新时请保持此边界。
 
@@ -62,7 +62,7 @@
 
 ### 11. Session Memory ✅
 - 异步提取：goroutine 方式，10k+ token 开始，+5k token + 3 tool call 再触发
-- 10 section Markdown 文件：`~/.primusbot/sessions/<id>/memory.md`
+- 10 section Markdown 文件：`~/.nekocode/sessions/<id>/memory.md`
 - `/new` 命令用 session memory 做免费摘要（不调 API）
 
 ### 12. Snip 工具 ✅

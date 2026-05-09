@@ -2,7 +2,7 @@
 package message
 
 import (
-	"primusbot/tui/components/block"
+	"nekocode/tui/components/block"
 )
 
 type ChatMessage struct {

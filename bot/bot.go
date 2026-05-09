@@ -9,12 +9,12 @@ import (
 	"time"
 
 	_ "embed"
-	"primusbot/bot/agent"
-	"primusbot/bot/agent/subagent"
-	"primusbot/bot/ctxmgr"
-	"primusbot/bot/session"
-	"primusbot/bot/tools"
-	"primusbot/llm"
+	"nekocode/bot/agent"
+	"nekocode/bot/agent/subagent"
+	"nekocode/bot/ctxmgr"
+	"nekocode/bot/session"
+	"nekocode/bot/tools"
+	"nekocode/llm"
 )
 
 type Bot struct {

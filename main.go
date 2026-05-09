@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"primusbot/bot"
-	"primusbot/tui"
+	"nekocode/bot"
+	"nekocode/tui"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func runNonInteractive() {
 func recoverPanic() {
 	if r := recover(); r != nil {
 		stack := debug.Stack()
-		logPath := fmt.Sprintf("primusbot-panic-%d.log", time.Now().Unix())
+		logPath := fmt.Sprintf("nekocode-panic-%d.log", time.Now().Unix())
 		msg := fmt.Sprintf("PANIC: %v\n\nStack:\n%s", r, string(stack))
 		_ = os.WriteFile(logPath, []byte(msg), 0644)
 		fmt.Fprintf(os.Stderr, "\nPANIC: %v\nStack saved to %s\n", r, logPath)

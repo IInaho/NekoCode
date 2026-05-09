@@ -6,13 +6,13 @@ import (
 	"os"
 	"time"
 
-	"primusbot/tui/components/message"
+	"nekocode/tui/components/message"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 const (
-	debugLogPath   = "/tmp/primusbot-debug.log"
+	debugLogPath   = "/tmp/nekocode-debug.log"
 	contentMarginV = 2
 )
 

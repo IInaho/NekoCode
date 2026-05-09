@@ -1,7 +1,7 @@
 // phase.go — 处理阶段常量 + setPhase 状态切换。
 package tui
 
-import "primusbot/bot/tools"
+import "nekocode/bot/tools"
 
 // Processing phases displayed in the status line during agent execution.
 const (

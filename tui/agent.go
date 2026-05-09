@@ -8,16 +8,16 @@ import (
 	"strings"
 	"time"
 
-	"primusbot/tui/components/block"
-	"primusbot/tui/components/message"
-	"primusbot/tui/styles"
+	"nekocode/tui/components/block"
+	"nekocode/tui/components/message"
+	"nekocode/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func logPanic(r any) {
 	stack := debug.Stack()
-	path := fmt.Sprintf("primusbot-panic-%d.log", time.Now().Unix())
+	path := fmt.Sprintf("nekocode-panic-%d.log", time.Now().Unix())
 	msg := fmt.Sprintf("PANIC: %v\n\nStack:\n%s", r, string(stack))
 	_ = os.WriteFile(path, []byte(msg), 0644)
 }

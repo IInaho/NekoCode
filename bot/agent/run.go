@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"primusbot/bot/tools"
-	"primusbot/llm"
+	"nekocode/bot/tools"
+	"nekocode/llm"
 )
 
 type RunResult struct {

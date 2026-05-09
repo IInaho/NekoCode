@@ -1,6 +1,6 @@
 <!--
     /\___/\
-   ( ◉   ◉ )   PrimusBot
+   ( ◉   ◉ )   NekoCode
     =  ▾  =
    /|     |\
   (_|     |_)
@@ -12,7 +12,7 @@
   <img src="" width="0" height="0">
 </p>
 
-# PrimusBot
+# NekoCode
 
 <p align="center">
   <b>终端里的 AI 伙伴，不止于终端</b><br>
@@ -129,8 +129,8 @@ Bot 核心不依赖任何特定 UI 框架。`BotInterface` 定义了完整的 Ag
 ## 快速开始
 
 ```bash
-mkdir -p ~/.primusbot
-cat > ~/.primusbot/config.json << 'EOF'
+mkdir -p ~/.nekocode
+cat > ~/.nekocode/config.json << 'EOF'
 {
   "provider": "anthropic",
   "api_key": "sk-your-key-here",
@@ -140,13 +140,13 @@ cat > ~/.primusbot/config.json << 'EOF'
 }
 EOF
 
-go build -o primusbot .
+go build -o nekocode .
 
 # 交互模式
-./primusbot
+./nekocode
 
 # 单次调用
-./primusbot "帮我看看 main.go 的内容"
+./nekocode "帮我看看 main.go 的内容"
 ```
 
 ---
@@ -173,7 +173,7 @@ go build -o primusbot .
 ### 计划中
 
 - **Skill 系统**：可安装的技能包，社区共享。一行命令安装一个专项能力——"配置 ESLint"、"部署到 Vercel"、"生成 CHANGELOG"
-- **MCP 协议支持**：连接外部 MCP server，工具生态无限扩展。数据库查询、K8s 管理、监控告警——任何 MCP server 都是 PrimusBot 的工具
+- **MCP 协议支持**：连接外部 MCP server，工具生态无限扩展。数据库查询、K8s 管理、监控告警——任何 MCP server 都是 NekoCode 的工具
 - **Web GUI**：Bot 核心通过接口解耦，Web 前端无缝对接。同一个 Agent，浏览器里用
 - **IM 接入**：对接企业微信、飞书、Slack，Bot 作为全天候托管 Agent。早上收到任务，晚上回来验收——全程在 IM 里完成
 - **Plan 模式**：复杂改动先出方案文本，用户审批后自动执行

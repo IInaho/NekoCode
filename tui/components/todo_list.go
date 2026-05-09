@@ -4,7 +4,7 @@ package components
 import (
 	"sync"
 
-	"primusbot/bot/tools"
+	"nekocode/bot/tools"
 )
 
 type TodoList struct {

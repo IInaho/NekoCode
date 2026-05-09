@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"primusbot/bot/ctxmgr"
-	"primusbot/bot/tools"
-	"primusbot/llm"
+	"nekocode/bot/ctxmgr"
+	"nekocode/bot/tools"
+	"nekocode/llm"
 )
 
 // Engine runs a sub-agent loop. Fully self-contained — does not import agent.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"primusbot/llm"
+	"nekocode/llm"
 )
 
 // withRetry executes fn with exponential backoff, logging retries to the debug log.

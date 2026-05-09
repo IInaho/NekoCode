@@ -1,7 +1,7 @@
 // update.go — tea.Update 主循环消息分发。
 package tui
 import (
-	"primusbot/tui/components"
+	"nekocode/tui/components"
 
 	"charm.land/bubbles/v2/cursor"
 	"charm.land/bubbles/v2/spinner"
