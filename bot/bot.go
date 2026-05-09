@@ -41,18 +41,26 @@ func New() *Bot {
 	// Inject environment as <system-reminder> user message (not system prompt)
 	// so the system prompt stays lean for prompt caching.
 	if cwd, err := os.Getwd(); err == nil {
-		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\nWorking directory: %s\nUse list/glob to explore, read when needed.\n</system-reminder>", cwd))
+		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\nWorking directory: %s\nToday's date is %s. Use this for web searches and file timestamps.\nUse list/glob to explore, read when needed.\n</system-reminder>", cwd, time.Now().Format("2006-01-02")))
 	}
 	ctxMgr.SetTokenBudget(cfg.TokenBudget)
 
 	var llmClient llm.LLM
 	switch cfg.Provider {
 	case "anthropic":
-		llmClient = llm.NewAnthropic(cfg.APIKey, cfg.Model)
+		c := llm.NewAnthropic(cfg.APIKey, cfg.Model)
+		// Separate thinking budget from output budget so reasoning
+		// doesn't consume output tokens (OpenCode pattern).
+		c.SetThinkingBudget(cfg.ThinkingBudget)
+		llmClient = c
 	case "glm":
-		llmClient = llm.NewGLM(cfg.APIKey, cfg.BaseURL, cfg.Model)
+		c := llm.NewGLM(cfg.APIKey, cfg.BaseURL, cfg.Model)
+		c.SetDisableThinking(true) // DeepSeek auto-max can't be controlled, disable by default
+		llmClient = c
 	default:
-		llmClient = llm.NewOpenAI(cfg.APIKey, cfg.BaseURL, cfg.Model)
+		c := llm.NewOpenAI(cfg.APIKey, cfg.BaseURL, cfg.Model)
+		c.SetDisableThinking(true) // DeepSeek auto-max can't be controlled, disable by default
+		llmClient = c
 	}
 
 	ctxMgr.SetSummarizer(func(msgs []llm.Message, prevSummary string) (string, error) {

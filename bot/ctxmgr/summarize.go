@@ -64,6 +64,12 @@ If a previous summary exists, update it incrementally — add new information an
 Do NOT mention that you are summarizing or compacting context.
 Keep each section concise.
 
+CRITICAL Preservation Rules:
+- Code snippets: preserve FULL code for any file that was modified or is under discussion. Do NOT abbreviate or replace with "updated X".
+- Error messages: copy verbatim — do NOT paraphrase. Error text must be exact so future diagnosis is possible.
+- File paths: always include the exact path with line numbers when available (e.g., "bot/agent/run.go:212").
+- User requirements: use direct quotes for constraints or preferences the user specified. "User asked for X with Y constraint" is NOT enough — include the actual requirement text.
+
 Output in this exact format:
 
 [Goal]

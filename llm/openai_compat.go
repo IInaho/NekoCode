@@ -17,11 +17,17 @@ type OpenAICompatible struct {
 	maxTokens       int
 	temperature     float64
 	disableThinking bool
+	reasoningEffort string // "" = default, "high"/"max" for DeepSeek
 }
 
 func (c *OpenAICompatible) SetMaxTokens(n int)              { c.maxTokens = n }
 func (c *OpenAICompatible) MaxTokens() int                   { return c.maxTokens }
 func (c *OpenAICompatible) SetDisableThinking(disable bool) { c.disableThinking = disable }
+func (c *OpenAICompatible) SetThinkingBudget(tokens int) {
+	// DeepSeek doesn't support thinking budget — only on/off + reasoning_effort.
+	c.disableThinking = tokens < 0
+}
+func (c *OpenAICompatible) SetReasoningEffort(effort string) { c.reasoningEffort = effort }
 
 func newOpenAICompat(apiKey, baseURL, model string) *OpenAICompatible {
 	return &OpenAICompatible{
@@ -58,9 +64,12 @@ func (c *OpenAICompatible) Chat(ctx context.Context, messages []Message, tools [
 	if len(tools) > 0 {
 		body["tools"] = tools
 		body["tool_choice"] = "auto"
-		if c.disableThinking {
-			body["thinking"] = map[string]string{"type": "disabled"}
-		}
+	}
+	if c.disableThinking {
+		body["thinking"] = map[string]string{"type": "disabled"}
+	} else if c.reasoningEffort != "" {
+		body["reasoning_effort"] = c.reasoningEffort
+		body["thinking"] = map[string]string{"type": "enabled"}
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -107,9 +116,12 @@ func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, t
 	if len(tools) > 0 {
 		body["tools"] = tools
 		body["tool_choice"] = "auto"
-		if c.disableThinking {
-			body["thinking"] = map[string]string{"type": "disabled"}
-		}
+	}
+	if c.disableThinking {
+		body["thinking"] = map[string]string{"type": "disabled"}
+	} else if c.reasoningEffort != "" {
+		body["reasoning_effort"] = c.reasoningEffort
+		body["thinking"] = map[string]string{"type": "enabled"}
 	}
 
 	jsonBody, _ := json.Marshal(body)

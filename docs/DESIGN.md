@@ -1,5 +1,7 @@
 # PrimusBot 设计文档
 
+> **本文档职责**: 描述产品设计——UI 布局、交互模式、视觉主题、Agent 能力设计、上下文管理策略、防幻觉设计原则。不包含代码实现细节、文件路径、函数名等属于 ARCHITECTURE.md 的内容。更新时请保持此边界。
+
 ## 产品定位
 
 PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、执行本地操作（文件读写、Shell 命令、文件搜索），并在执行可能有影响的操作前征求用户确认。
@@ -89,8 +91,9 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 
 - **左侧**：`▐`（U+2590）厚色条 + `PaddingLeft(1)` 统一缩进
 - **右侧**：独立 Scrollbar 组件，`┃` thumb + `│` track
-- **工具卡片**：暖金色 `NormalBorder`，edit 块显示 `[+]`/`[-]` 折叠展开 diff
-- **工具组**：同名单行工具折叠为 `◆ read ×5 [+]`，展开后逐条显示
+- **工具卡片**：暖金色 `NormalBorder`，单次 edit 块显示 `[+]`/`[-]` 折叠展开 diff
+- **edit 工具组**：`◆ edit ×3 [-] 收起` 展开后直接内联每个文件的 diff，`▍ path` 标注文件，一次展开全部可见
+- **其他工具组**：同名单行工具折叠为 `◆ read ×5 [+]`，展开后逐条显示
 - **处理卡片**：teal 边框，分隔线横跨全宽区分 output/reasoning 区块
 
 ### 处理阶段
@@ -121,12 +124,14 @@ PrimusBot 是一个运行在终端中的 AI 助手。它能理解自然语言、
 
 ```
 Confirm
-  bash rm -rf /tmp/cache  [destructive]
+  bash go test ./...  [safe]
   Proceed?  [enter] yes  [esc] no
 ```
 
-- `[write]`/`[destructive]` 黄色，`[forbidden]` 红色（直接拒绝不弹框）
-- Enter 确认，Esc 取消
+- 展示具体命令/路径而非仅工具名（如 `bash go build`、`write server/main.go`）
+- 等级标签：`[safe]`/`[modify]`/`[danger]`/`[blocked]`
+- `[modify]`/`[danger]` 黄色，`[blocked]` 红色（直接拒绝不弹框）
+- `[safe]` 命令自动放行，不弹确认框
 
 ### 输入交互
 
@@ -156,15 +161,15 @@ Confirm
 
 | 工具 | 功能 | 安全等级 | 执行模式 |
 |------|------|----------|----------|
-| **bash** | Shell 命令 | 全部 Write+（确认） | Sequential |
-| **read** | 文件读取（文本/图片/PDF） | Safe | Parallel |
-| **write** | 文件创建/覆盖（路径校验） | Write | Sequential |
-| **edit** | 精确字符串替换 + diff | Write | Sequential |
+| **bash** | Shell 命令（只读命令自动 Safe） | Safe～Forbidden | Sequential |
+| **read** | 文件读取 + 二进制检测 + 文件未找到建议 | Safe | Parallel |
+| **write** | 文件创建/覆盖（先读后改强制） | Write | Sequential |
+| **edit** | 精确替换 + diff + 3轮模糊匹配 | Write | Sequential |
 | **list** | 目录列表 | Safe | Parallel |
 | **glob** | 文件模式匹配（支持 **） | Safe | Parallel |
 | **grep** | ripgrep 内容搜索 | Safe | Parallel |
-| **web_search** | Exa MCP 搜索 | Safe | Parallel |
-| **web_fetch** | 网页抓取 | Safe | Parallel |
+| **web_search** | Exa MCP 搜索 + 强制 Sources 引用 | Safe | Parallel |
+| **web_fetch** | 网页抓取 + 125字符引述限制 | Safe | Parallel |
 | **snip** | 移除旧消息 | Destructive | Sequential |
 | **task** | 子 agent 委派 | Safe | Parallel |
 | **todo_write** | 任务列表更新 | Safe | Sequential |
@@ -179,33 +184,70 @@ Confirm
 | plan | 方案设计 | read/grep/glob/list/web_search/web_fetch | 3 |
 | decompose | 任务拆解 | read/grep/glob/list | 2 |
 
-子 agent 通过独立 LLM 客户端运行，disableThinking=true，上下文隔离，共享 `tools.Executor` 保证安全检查一致。
+子 agent 通过独立 LLM 客户端运行（思考关闭、上下文隔离），安全检查与主 Agent 一致。
 
 ### 危险命令分级
 
-所有 bash 命令默认 `LevelWrite`（需确认），然后按关键词匹配升级：
+bash 命令按关键词智能分级，三层判断：
 
-**升级至 Destructive（危险）**：`rm`、`chmod`、`kill`、`reboot`、`git push --force` 等
-**升级至 Forbidden（拒绝）**：`sudo`、`eval`、`ssh`、`curl|bash`、`dd`、`mkfs` 等
+**降级至 Safe（自动放行）**：`go version`、`go vet`、`git status`、`git log`、`git diff`、`ls`、`cat`、`ps`、`du`、`file` 等纯输出命令
+**升级至 Danger（危险，确认）**：`rm`、`chmod`、`kill`、`reboot`、`git push --force` 等
+**升级至 Blocked（拒绝）**：`sudo`、`eval`、`ssh`、`curl|bash`、`dd`、`mkfs` 等
+**默认 Modify（确认）**：其余所有命令
 
 ### 并行工具执行
 
 互不依赖的工具并发执行，worker pool 上限 10。并行启动前检查 ctx 取消状态。subagent 共享同一个 Executor 实例。
 
-## 模块职责
+## 幻觉防治
 
-| 模块 | 位置 | 职责 |
-|------|------|------|
-| **Agent 循环** | `bot/agent/` | Reason→Execute→Feedback，BTW 中断，指数退避重试 |
-| **子 Agent** | `bot/agent/subagent/` | 独立循环，thinking 禁用，共享 tools.Executor |
-| **LLM 网关** | `llm/` | 统一对接多 provider，共享 HTTP 连接池，流式解析 |
-| **工具系统** | `bot/tools/` | Tool 接口 + Executor + DangerLevel + 路径安全 + Phase 类型 |
-| **上下文管理** | `bot/ctxmgr/` | 滑动窗口 + 微压缩 + 结构化摘要 + Snip |
-| **Session Memory** | `bot/session/` | 异步 Markdown 提取，免费摘要 |
-| **Bot 组装** | `bot/bot.go` | 依赖注入，ShouldStop，ContextTransform，session 接线 |
-| **命令系统** | `bot/commands.go` | 斜杠命令解析与注册 |
-| **配置** | `bot/config.go` | `~/.primusbot/config.json` 加载 |
-| **TUI** | `tui/` | Bubble Tea v2，BotInterface 解耦，组件化 |
+基于纵深防御思想，在 8 个层面设置防幻觉机制：
+
+- **System Prompt**: 禁止生成 URL、忠实报告、先验证再声称完成、Prompt Injection 检测、当前状态权威
+- **运行时强制**: Write/Edit 前检查是否已 Read；工具输出 2000行/50KB 截断
+- **末日循环检测**: 3 次连续相同工具调用 → 强制产出结论
+- **验证强化**: verify agent 硬性要求 Command block + 终端原文，4 条自检清单
+- **记忆漂移**: 模板警告 + "记忆说 X 存在 ≠ X 现在存在"
+- **来源引用**: web_search 强制 Sources 章节，web_fetch 125 字符引述限制
+- **上下文保真**: 压缩时完整保留代码片段、错误原文、文件路径+行号
+- **工具容错**: Read 二进制检测 + 文件未找到智能建议；Edit 3 轮渐进模糊匹配
+- **思考控制**: Anthropic `adaptive` 模式（DeepSeek 不认识 → 不开启）；OpenAI 兼容默认关 thinking；两级 finish_reason=length 升级；reasoning token 计入统计
+- **推理长度限制**: System Prompt 按任务类型设硬性上限——bug fix 1 句、重构 3 句、设计 5 句，避免模型陷入分析瘫痪
+- **反子 agent**: System Prompt 明确禁止对简单任务派生子 agent，task 工具 description 标注 "HEAVY/EXPENSIVE"，提示不足 200 字符说明太简单不值得
+- **edit 组内联**: `◆ edit ×3 [-]` 展开后直接内联每个文件的 diff（`▍ path`），一次展开无需二次折叠
+- **bash 显示截断**: 工具块和确认栏中 bash 命令只展示首行 + `…`，heredoc/多行脚本不污染界面
+
+### 跨目录编辑
+
+编辑工具允许操作工作目录外的文件——`validatePath` 不再拒绝跨目录路径，确认系统负责用户同意。危险等级依据命令类型分级，而非路径位置。
+
+### 工具组折叠示意
+
+```
+◆ read ×15 [+] 展开    ← 收起（单行）
+◆ read ×15 [-] 收起    ← 展开逐条：
+  ◆ read (1/15) /path/to/file1.go
+  ◆ read (2/15) /path/to/file2.go
+
+◆ edit ×3 [-] 收起     ← edit 组展开，diff 内联
+  ▍ server/main.go
+    ── diff ──
+    - old code
+    + new code
+  ▍ server/game.go
+    ── diff ──
+    - old line
+    + new line
+```
+
+### 设计原则
+
+- **Ground Everything** — 每个决策锚定在可验证的现实中（文件系统、命令输出、URL 来源）
+- **Assume Deception** — 任何 LLM 输出（包括子 agent）都可能包含幻觉，需独立验证
+- **Make It Checkable** — 所有输出格式服务于可验证性（file_path:line_number、Sources、Command run）
+- **Fail Loudly** — 幻觉不能被静默：先读后改违规 → 报错，末日循环 → 强制停止，二进制 → 明确拒绝
+- **Budget Reasoning** — 推理有成本：按任务类型限制思考长度，禁止在未读代码前凭空分析
+- **Self-Serve First** — 主 Agent 优先自己完成任务，子 agent 仅在满足三个条件（5+ 文件跨包 / 独立上下文 / 单回合确实太复杂）时才使用
 
 ## 非交互模式
 

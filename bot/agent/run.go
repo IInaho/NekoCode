@@ -127,6 +127,16 @@ func (a *Agent) executeAndFeedback(calls []tools.ToolCallItem, reasoning *Reason
 	}
 	results := a.executor.ExecuteBatch(a.getCtx(), calls)
 
+	if a.doomLoopCheck(state, calls) {
+		output := a.forceSynthesize()
+		a.ctxMgr.AddAssistantResponse(output, "")
+		if callback != nil {
+			callback(a.currentStep, "done", "chat", "", "", output, 0, 0)
+		}
+		a.finished = true
+		return state
+	}
+
 	msgs := make([]llm.Message, 0, len(results))
 	for i, r := range results {
 		content := r.Output
@@ -205,6 +215,29 @@ func (a *Agent) Feedback(state *stepState, result *ActionResult) (*stepState, bo
 	}
 
 	return newState, shouldRetry, shouldStop
+}
+
+// doomLoopCheck detects 3+ consecutive identical tool calls and forces stop.
+func (a *Agent) doomLoopCheck(state *stepState, calls []tools.ToolCallItem) bool {
+	if len(calls) != 1 {
+		a.doomLoopHistory = nil
+		return false
+	}
+	key := calls[0].Name + "|" + formatArgs(calls[0].Args)
+	a.doomLoopHistory = append(a.doomLoopHistory, key)
+	if len(a.doomLoopHistory) > 3 {
+		a.doomLoopHistory = a.doomLoopHistory[1:]
+	}
+	if len(a.doomLoopHistory) == 3 {
+		for i := 1; i < 3; i++ {
+			if a.doomLoopHistory[i] != a.doomLoopHistory[0] {
+				return false
+			}
+		}
+		writeAgentLog("doomLoop: 3 identical calls to %s — forcing synthesis", calls[0].Name)
+		return true
+	}
+	return false
 }
 
 // detectDiminishingReturns checks if tool output is stagnating.

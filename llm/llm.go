@@ -123,5 +123,7 @@ type LLM interface {
 	SetMaxTokens(n int)
 	MaxTokens() int
 	SetDisableThinking(disable bool)
+	SetThinkingBudget(tokens int)     // 0 = use default, -1 = disabled
+	SetReasoningEffort(effort string) // "high"/"max" (DeepSeek/openai-compat)
 }
 

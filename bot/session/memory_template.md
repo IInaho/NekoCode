@@ -1,3 +1,11 @@
+## Staleness Warning
+
+This memory captures what was true when written. It may be outdated.
+- If this memory names a file path → verify the file exists before acting.
+- If this memory names a function or flag → grep for it to confirm it still exists.
+- "The memory says X exists" is not the same as "X exists now."
+- If recalled memory conflicts with current code or command output → trust current reality. Update or remove stale memories.
+
 # Session Title
 *简短 5-10 字标题，信息密度高*
 

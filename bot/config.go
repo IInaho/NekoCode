@@ -10,18 +10,20 @@ import (
 // --- Config ---
 
 type Config struct {
-	Provider    string `json:"provider"`
-	APIKey      string `json:"api_key"`
-	Model       string `json:"model"`
-	BaseURL     string `json:"base_url"`
-	TokenBudget int    `json:"token_budget"`
+	Provider       string `json:"provider"`
+	APIKey         string `json:"api_key"`
+	Model          string `json:"model"`
+	BaseURL        string `json:"base_url"`
+	TokenBudget    int    `json:"token_budget"`
+	ThinkingBudget int    `json:"thinking_budget"` // 0=default, -1=off; Anthropic only
 }
 
 var DefaultConfig = Config{
-	Provider:    "openai",
-	Model:       "gpt-4",
-	BaseURL:     "https://api.openai.com/v1",
-	TokenBudget: 128000,
+	Provider:       "openai",
+	Model:          "gpt-4",
+	BaseURL:        "https://api.openai.com/v1",
+	TokenBudget:    128000,
+	ThinkingBudget: 16000, // separate 16K for thinking (Anthropic)
 }
 
 func LoadConfig() (*Config, error) {

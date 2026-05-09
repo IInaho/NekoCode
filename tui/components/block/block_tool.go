@@ -15,7 +15,7 @@ func renderToolLine(b ContentBlock, width int, sty *styles.Styles) string {
 	if b.BatchTotal > 1 {
 		args = fmt.Sprintf("(%d/%d) %s", b.BatchIdx, b.BatchTotal, b.ToolArgs)
 	}
-	hasContent := b.ToolName == "edit" && b.Content != ""
+	hasContent := (b.ToolName == "edit" || b.ToolName == "task") && b.Content != ""
 	arrow := ""
 	if hasContent {
 		if b.Collapsed {
@@ -35,7 +35,12 @@ func renderToolLine(b ContentBlock, width int, sty *styles.Styles) string {
 	if contentW < 10 {
 		contentW = 10
 	}
-	diff := renderBlockDiff(ContentBlock{Content: b.Content}, sty)
-	indented := lipgloss.NewStyle().PaddingLeft(2).Render(diff)
+	var body string
+	if b.ToolName == "task" {
+		body = sty.Muted.Render(b.Content)
+	} else {
+		body = renderBlockDiff(ContentBlock{Content: b.Content}, sty)
+	}
+	indented := lipgloss.NewStyle().PaddingLeft(2).Render(body)
 	return lipgloss.JoinVertical(lipgloss.Left, accentLine, indented)
 }

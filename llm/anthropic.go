@@ -12,29 +12,47 @@ import (
 )
 
 type Anthropic struct {
-	APIKey      string
-	BaseURL     string
-	Model       string
-	maxTokens   int
-	disableThinking bool
-	temperature float64
+	APIKey          string
+	BaseURL         string
+	Model           string
+	maxTokens       int
+	thinkingType    string // "adaptive" (default), "enabled", "disabled"
+	thinkingBudget  int    // only used when thinkingType == "enabled"
+	temperature     float64
 }
 
 func NewAnthropic(apiKey, model string) *Anthropic {
 	return &Anthropic{
-		APIKey:      apiKey,
-		BaseURL:     "https://api.anthropic.com/v1",
-		Model:       model,
-		maxTokens:   8192,
-		temperature: 0.7,
+		APIKey:       apiKey,
+		BaseURL:      "https://api.anthropic.com/v1",
+		Model:        model,
+		maxTokens:    32000,
+		temperature:  0.7,
+		thinkingType: "adaptive", // Claude Code default — safe for DeepSeek too
 	}
 }
 
-func (a *Anthropic) SetAPIKey(apiKey string)         { a.APIKey = apiKey }
-func (a *Anthropic) SetBaseURL(url string)           { a.BaseURL = url }
-func (a *Anthropic) SetMaxTokens(n int)              { a.maxTokens = n }
-func (a *Anthropic) MaxTokens() int                   { return a.maxTokens }
-func (a *Anthropic) SetDisableThinking(disable bool) { a.disableThinking = disable }
+func (a *Anthropic) SetAPIKey(apiKey string)  { a.APIKey = apiKey }
+func (a *Anthropic) SetBaseURL(url string)    { a.BaseURL = url }
+func (a *Anthropic) SetMaxTokens(n int)       { a.maxTokens = n }
+func (a *Anthropic) MaxTokens() int            { return a.maxTokens }
+func (a *Anthropic) SetDisableThinking(disable bool) {
+	if disable {
+		a.thinkingType = "disabled"
+	} else {
+		a.thinkingType = "adaptive"
+	}
+}
+func (a *Anthropic) SetThinkingBudget(tokens int) {
+	if tokens < 0 {
+		a.thinkingType = "disabled"
+	} else if tokens > 0 {
+		a.thinkingType = "enabled"
+		a.thinkingBudget = tokens
+	}
+	// tokens == 0: keep default (adaptive)
+}
+func (a *Anthropic) SetReasoningEffort(string) {} // not used by Anthropic
 
 type anthropicTool struct {
 	Name        string      `json:"name"`
@@ -177,8 +195,24 @@ func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream boo
 		Tools:       toAnthropicTools(tools),
 		Stream:      stream,
 	}
-	if a.disableThinking {
+	switch a.thinkingType {
+	case "disabled":
 		req.Thinking = map[string]string{"type": "disabled"}
+	case "enabled":
+		budget := a.thinkingBudget
+		if budget == 0 {
+			budget = min(16000, a.maxTokens/2)
+		}
+		if budget >= a.maxTokens {
+			budget = a.maxTokens - 1
+		}
+		req.Thinking = map[string]interface{}{
+			"type":          "enabled",
+			"budget_tokens": budget,
+		}
+		req.Temperature = 1 // API requires temperature when thinking is enabled
+	default: // "adaptive" — Claude Code default, DeepSeek ignores it → no thinking
+		req.Thinking = map[string]string{"type": "adaptive"}
 	}
 	return req, nil
 }

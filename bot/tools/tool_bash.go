@@ -68,7 +68,33 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 		return LevelWrite
 	}
 
+	// Commands that only produce output — no file system changes.
+	if isReadOnly(cmd) {
+		return LevelSafe
+	}
+
 	return LevelWrite
+}
+
+var readOnlyPrefixes = []string{
+	"go version", "go env", "go doc", "go vet", "go fmt",
+	"git status", "git log", "git diff", "git branch", "git show",
+	"git blame", "git tag", "git remote", "git config",
+	"ls", "pwd", "whoami", "date", "env", "printenv",
+	"which", "type ", "uname", "hostname", "id ", "wc ",
+	"cat ", "head ", "tail ", "less ", "more ",
+	"du ", "df ", "free ", "uptime", "ps ", "pgrep",
+	"man ", "info ", "file ", "stat ",
+}
+
+func isReadOnly(cmd string) bool {
+	lower := strings.ToLower(cmd)
+	for _, p := range readOnlyPrefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchAny(cmd string, patterns []string) bool {

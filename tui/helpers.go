@@ -29,8 +29,13 @@ func formatBriefArgs(toolName, toolArgs string) string {
 		return args["path"]
 	case "bash":
 		cmd := args["command"]
+		// Only show the first line — heredocs and multi-line scripts
+		// pollute the tool block display.
+		if idx := strings.IndexAny(cmd, "\n\r"); idx >= 0 {
+			cmd = cmd[:idx] + "…"
+		}
 		if len(cmd) > 60 {
-			cmd = tools.TruncateByRune(cmd, 57)
+			cmd = tools.TruncateByRune(cmd, 57) + "…"
 		}
 		return cmd
 	case "glob":

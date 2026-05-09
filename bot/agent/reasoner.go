@@ -58,9 +58,17 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 				Interrupted: true,
 			}
 		}
+		// If we have partial text, surface it so the user isn't left with
+		// nothing — but mark it clearly as truncated.
+		if textContent != "" && !isGarbledToolCall(textContent) {
+			return &ReasoningResult{
+				Thought: "Truncated reply", Action: ActionChat,
+				ActionInput: textContent, IsFinal: true,
+			}
+		}
 		return &ReasoningResult{
 			Thought: "LLM call failed", Action: ActionChat,
-			ActionInput: fmt.Sprintf("Sorry, call failed: %v", err), IsFinal: true,
+			ActionInput: fmt.Sprintf("调用失败了，原因：%v。可以再试一次吗？", err), IsFinal: true,
 		}
 	}
 
@@ -180,6 +188,8 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 				if a.reasoningFn != nil {
 					a.reasoningFn(token.ReasoningContent)
 				}
+				estCompl++
+				a.AddTokens(0, 1)
 				writeAgentLog("ReasoningContent[%d]: %q", len(token.ReasoningContent), token.ReasoningContent)
 			}
 			if token.ToolCallDelta != nil {
@@ -199,11 +209,29 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 			}
 		}
 
-		// Escalate max_tokens if model hit output limit without tool calls.
-		if finishReason == "length" && len(tcAccum) == 0 && a.llmClient.MaxTokens() < 64000 {
-			writeAgentLog("callLLM: finish_reason=length, escalating max_tokens to 64000")
-			a.llmClient.SetMaxTokens(64000)
-			return fmt.Errorf("output token limit hit, retrying with higher limit")
+		// Two-tier escalation for finish_reason=length:
+		//   Tier 1: double max_tokens to 64000 and retry.
+		//   Tier 2: if already at 64000, disable thinking to stop
+		//            reasoning from eating the output budget.
+		//   After both tiers exhausted, return partial text + error
+		//   so callers can surface a non-garbled summary to the user.
+		if finishReason == "length" && len(tcAccum) == 0 {
+			if a.llmClient.MaxTokens() < 64000 {
+				writeAgentLog("callLLM: finish_reason=length, escalating max_tokens %d→64000", a.llmClient.MaxTokens())
+				a.llmClient.SetMaxTokens(64000)
+				return fmt.Errorf("output token limit hit, retrying with higher limit")
+			}
+			writeAgentLog("callLLM: finish_reason=length at max_tokens=64000, disabling thinking")
+			a.llmClient.SetDisableThinking(true)
+			return fmt.Errorf("output limit still hit at 64000, retrying with thinking disabled")
+		}
+
+		// If the stream ended with length and we exhausted all retries,
+		// surface partial text for display but signal an error so the
+		// caller knows the response is incomplete.
+		if finishReason == "length" && len(tcAccum) == 0 {
+			textContent = tools.StripAnsi(textBuf.String())
+			return fmt.Errorf("output truncated at %d tokens", a.llmClient.MaxTokens())
 		}
 
 		select {
@@ -254,9 +282,28 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, textContent, err
 	}
 	return items, textContent, nil
+}
+
+// isGarbledToolCall detects raw XML/JSON tool-call fragments that leak
+// into text output when the model's function-calling output was truncated.
+func isGarbledToolCall(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	// Raw XML invoke pattern leaked into text output.
+	if strings.Contains(t, "<invoke") || strings.Contains(t, "</invoke") ||
+		strings.Contains(t, "<parameter") || strings.Contains(t, "</parameter") {
+		return true
+	}
+	// Raw JSON tool_call pattern.
+	if strings.Contains(t, `"tool_calls"`) || strings.Contains(t, `"tool_use"`) {
+		return true
+	}
+	return false
 }
 
 type toolAccum struct {
@@ -321,10 +368,16 @@ func (a *Agent) forceSynthesize() string {
 			}
 		}
 
-		if finishReason == "length" && a.llmClient.MaxTokens() < 64000 {
-			writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens to 64000")
-			a.llmClient.SetMaxTokens(64000)
-			return fmt.Errorf("output token limit hit, retrying with higher limit")
+		// Same two-tier escalation as callLLMForTool.
+		if finishReason == "length" {
+			if a.llmClient.MaxTokens() < 64000 {
+				writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens %d→64000", a.llmClient.MaxTokens())
+				a.llmClient.SetMaxTokens(64000)
+				return fmt.Errorf("output token limit hit, retrying with higher limit")
+			}
+			writeAgentLog("forceSynthesize: finish_reason=length at max_tokens=64000, disabling thinking")
+			a.llmClient.SetDisableThinking(true)
+			return fmt.Errorf("output limit still hit at 64000, retrying with thinking disabled")
 		}
 
 		select {
@@ -340,6 +393,9 @@ func (a *Agent) forceSynthesize() string {
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return "Interrupted"
+		}
+		if text != "" && !isGarbledToolCall(text) {
+			return text
 		}
 		return "Information collected but summarization failed"
 	}

@@ -29,16 +29,15 @@ func (t *TaskTool) Name() string                                       { return 
 func (t *TaskTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
 func (t *TaskTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
 func (t *TaskTool) Description() string {
-	return `Heavy tool: delegate complex sub-tasks to specialized sub-agents. For simple file writes, use write directly — don't spawn a subagent for every operation.
+	return `HEAVY/EXPENSIVE — DO NOT use for simple tasks you can do yourself. Read, edit, write, bash are much faster.
 
-Use only in these scenarios:
-- executor: large refactors, complex multi-file changes (needs independent context and 3+ reasoning steps)
-- explore: large-scale codebase exploration (needs 3+ search rounds)
-- verify: project has tests and needs adversarial validation (edge cases/concurrency/malformed input). For simple go build, do it yourself
-- plan: when user needs to approve the approach
-- decompose: break large plans into parallel sub-tasks
+ONLY use when ALL conditions are true:
+- executor: 5+ files across multiple packages, AND too complex for one turn
+- explore: 3+ search rounds needed across the codebase
+- verify: project has tests AND you made non-trivial changes (NOT simple build check)
+- plan/decompose: user explicitly asked for a plan
 
-Subagents can't see conversation history — prompts must be self-contained. Multiple independent tasks can be sent at once for parallel execution.`
+Subagents CANNOT see conversation history — prompts must include ALL context (file paths, errors, code snippets). If your prompt is under 200 chars, the task is too simple for a subagent.`
 }
 
 func (t *TaskTool) Parameters() []Parameter {

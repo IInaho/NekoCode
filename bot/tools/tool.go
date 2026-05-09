@@ -23,11 +23,11 @@ func (d DangerLevel) String() string {
 	case LevelSafe:
 		return "safe"
 	case LevelWrite:
-		return "write"
+		return "modify"
 	case LevelDestructive:
-		return "destructive"
+		return "danger"
 	case LevelForbidden:
-		return "forbidden"
+		return "blocked"
 	default:
 		return "unknown"
 	}

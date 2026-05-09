@@ -129,6 +129,15 @@ func (m *Messages) AddDiffBlock(content string) {
 	m.mu.Unlock()
 }
 
+func (m *Messages) AddTaskOutput(output string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.AddTaskOutput(output)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
 func (m *Messages) AddThinkBlock(content string) {
 	m.mu.Lock()
 	if m.processingItem != nil {
@@ -253,7 +262,7 @@ func (m *Messages) toggleBlocks(blks []block.ContentBlock) bool {
 				collapsed = true
 			}
 		}
-		if count == 1 && b.ToolName == "edit" && b.Content != "" {
+		if count == 1 && (b.ToolName == "edit" || b.ToolName == "task") && b.Content != "" {
 			hasToggleable = true
 			if b.Collapsed {
 				collapsed = true
@@ -280,7 +289,7 @@ func (m *Messages) toggleBlocks(blks []block.ContentBlock) bool {
 		if count > 1 {
 			blks[i].Collapsed = target
 		}
-		if count == 1 && b.ToolName == "edit" && b.Content != "" {
+		if count == 1 && (b.ToolName == "edit" || b.ToolName == "task") && b.Content != "" {
 			blks[i].Collapsed = target
 		}
 		i += count - 1

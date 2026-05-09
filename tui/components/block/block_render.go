@@ -98,6 +98,12 @@ func renderGroupLine(g ToolGroupInfo, cardW int, sty *styles.Styles) string {
 		return accentLine
 	}
 
+	// For edit groups, expand diffs inline — one level, no nested toggles.
+	if g.Name == "edit" {
+		return RenderEditGroupExpanded(g, cardW, sty, accentLine)
+	}
+
+	indent := "  "
 	var sb strings.Builder
 	sb.WriteString(accentLine)
 	all := append([]ContentBlock{g.First}, g.Rest...)
@@ -105,7 +111,38 @@ func renderGroupLine(g ToolGroupInfo, cardW int, sty *styles.Styles) string {
 		line := RenderBlock(b, cardW, sty)
 		for _, l := range strings.Split(line, "\n") {
 			if l != "" {
-				sb.WriteString("\n" + l)
+				sb.WriteString("\n" + indent + l)
+			}
+		}
+	}
+	return sb.String()
+}
+
+// RenderEditGroupExpanded renders an expanded edit group with each file's
+// diff shown inline under a ▍ path header. Single toggle, all diffs visible.
+func RenderEditGroupExpanded(g ToolGroupInfo, cardW int, sty *styles.Styles, accentLine string) string {
+	var sb strings.Builder
+	sb.WriteString(accentLine)
+
+	diffW := cardW - 6
+	if diffW < 10 {
+		diffW = 10
+	}
+
+	all := append([]ContentBlock{g.First}, g.Rest...)
+	for _, b := range all {
+		// File path header
+		fileHeader := sty.Teal.Render("▍ ") + sty.Subtle.Render(b.ToolArgs)
+		sb.WriteString("\n  " + fileHeader)
+
+		if b.Content == "" {
+			continue
+		}
+		// Diff content, indented 4 spaces under the file header
+		diff := renderBlockDiff(ContentBlock{Content: b.Content}, sty)
+		for _, l := range strings.Split(diff, "\n") {
+			if l != "" {
+				sb.WriteString("\n    " + l)
 			}
 		}
 	}

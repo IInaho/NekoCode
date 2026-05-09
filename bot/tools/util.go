@@ -4,10 +4,8 @@ package tools
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -26,8 +24,9 @@ func TruncateByRune(s string, max int) string {
 	return string(runes[:max])
 }
 
-// validatePath resolves path against the current working directory and rejects
-// paths that escape via ".." traversal or symlinks.
+// validatePath resolves path against the current working directory.
+// It resolves symlinks and returns the absolute path, but no longer rejects
+// paths outside cwd — the confirmation system handles user consent.
 func validatePath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -36,28 +35,15 @@ func validatePath(path string) (string, error) {
 	// Resolve symlinks to prevent escape via symlink indirection.
 	real, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		// If EvalSymlinks fails (e.g., file doesn't exist yet), validate the
-		// parent directory instead so we still catch traversal through existing
-		// symlinks in the path chain.
 		parent := filepath.Dir(abs)
 		realParent, pErr := filepath.EvalSymlinks(parent)
 		if pErr != nil {
-			// Can't resolve parent either — fall back to the unresolved path
-			// and rely on relative-path check as a best-effort guard.
 			real = abs
 		} else {
 			real = filepath.Join(realParent, filepath.Base(abs))
 		}
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return abs, nil // can't validate, trust the path
-	}
-	rel, err := filepath.Rel(cwd, real)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("path is outside the working directory: %s", path)
-	}
-	return abs, nil
+	return real, nil
 }
 
 var toolTransport = &http.Transport{

@@ -52,13 +52,20 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %v", err)
 	}
+	text := string(content)
 
-	idx := strings.Index(string(content), oldStr)
+	idx, pass := findWithFuzzy(text, oldStr)
 	if idx == -1 {
-		return "", fmt.Errorf("string not found in file. File contents (%s):\n%s\nHint: use Read to re-read the file, confirm the exact content before retrying.", filepath.Base(safePath), withLineNumbers(StripAnsi(string(content))))
+		return "", fmt.Errorf("string not found in file. File contents (%s):\n%s\nHint: use Read to re-read the file, confirm the exact content before retrying.", filepath.Base(safePath), withLineNumbers(StripAnsi(text)))
 	}
 
-	replaced := string(content)[:idx] + newStr + string(content)[idx+len(oldStr):]
+	var replaced string
+	switch pass {
+	case 1: // exact match — use original positions.
+		replaced = text[:idx] + newStr + text[idx+len(oldStr):]
+	default: // fuzzy match — replace the matched segment in-place.
+		replaced = text[:idx] + newStr + text[idx+len(oldStr):]
+	}
 
 	dir := filepath.Dir(safePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -77,7 +84,99 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	}
 	diff := strings.Join(diffLines, "\n")
 
-	return fmt.Sprintf("Replaced %s:\n%s", filepath.Base(safePath), diff), nil
+	passLabel := ""
+	if pass > 1 {
+		passLabel = fmt.Sprintf(" (fuzzy pass %d)", pass)
+	}
+	return fmt.Sprintf("Replaced %s%s:\n%s", filepath.Base(safePath), passLabel, diff), nil
+}
+
+// findWithFuzzy searches for oldStr in text using progressive tolerance.
+// Pass 1: exact match. Pass 2: trim trailing whitespace on each line.
+// Pass 3: trim both leading and trailing whitespace on each line.
+// Returns the byte offset in the original text and the pass number.
+func findWithFuzzy(text, oldStr string) (int, int) {
+	// Pass 1: exact match.
+	if idx := strings.Index(text, oldStr); idx != -1 {
+		return idx, 1
+	}
+
+	// Pass 2: rstrip each line (tolerate trailing whitespace differences).
+	if idx := fuzzyIndex(text, oldStr, rstripLines); idx != -1 {
+		return idx, 2
+	}
+
+	// Pass 3: strip each line (tolerate leading+trailing whitespace differences).
+	if idx := fuzzyIndex(text, oldStr, stripLines); idx != -1 {
+		return idx, 3
+	}
+
+	return -1, 0
+}
+
+type lineNorm func(string) string
+
+func rstripLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func stripLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimSpace(l)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// fuzzyIndex searches for oldStr in text after normalizing both with fn.
+// Returns the byte offset in the original text.
+func fuzzyIndex(text, oldStr string, fn lineNorm) int {
+	normOld := fn(oldStr)
+	normText := fn(text)
+
+	idx := strings.Index(normText, normOld)
+	if idx == -1 {
+		return -1
+	}
+
+	// Map the normalized position back to the original text.
+	// Walk both original and normalized, tracking byte offsets.
+	origPos := 0
+	normPos := 0
+	for normPos < idx && origPos < len(text) && normPos < len(normText) {
+		origLine := lineAt(text, origPos)
+		normLine := fn(origLine)
+		if normPos+len(normLine)+1 <= idx {
+			origPos += len(origLine) + 1 // +1 for newline
+			normPos += len(normLine) + 1
+		} else {
+			// Inside the target line.
+			offset := idx - normPos
+			// Scan character-by-character within this line.
+			o, n := 0, 0
+			for n < offset && o < len(origLine) {
+				if fn(string(origLine[o])) == string(normLine[n]) {
+					n++
+				}
+				o++
+			}
+			origPos += o
+			break
+		}
+	}
+	return origPos
+}
+
+func lineAt(s string, pos int) string {
+	end := strings.IndexByte(s[pos:], '\n')
+	if end == -1 {
+		return s[pos:]
+	}
+	return s[pos : pos+end]
 }
 
 func withLineNumbers(content string) string {

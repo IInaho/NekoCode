@@ -1,5 +1,7 @@
 # PrimusBot 开发路线
 
+> **本文档职责**: 追踪已完成和待办的功能项。记录开发里程碑、实施状态（✅/🟡）。每项简要描述功能目标，不展开设计或架构细节（细节属于 DESIGN.md / ARCHITECTURE.md）。更新时请保持此边界。
+
 按优先级排列，每项可独立实施验证。✅ = 已完成，🟡 = 部分完成。
 
 ---
@@ -134,29 +136,55 @@
 ### 27. 文档更新 ✅
 - ARCHITECTURE.md / DESIGN.md / PLAN.md 反映当前项目状态
 
+### 28. 幻觉防治体系 ✅
+基于 Claude Code / OpenCode 调研实施的 14 项防幻觉改造：
+- System Prompt 增强（禁止生成 URL、忠实报告、Prompt Injection 检测、当前状态权威）+ 日期注入
+- 末日循环检测（3 次相同调用 → forceSynthesize）
+- 工具输出预算截断（2000行/50KB）
+- "先读后改"运行时强制（Edit/Write 前校验 Read 记录）
+- web_search/fetch 来源引用强制
+- verify agent 格式强化（Command block 强制 + 自检清单）
+- 记忆漂移防护（模板警告）
+- 二进制文件检测（null 字节 + 不可打印字符比例）
+- 文件未找到智能建议（Levenshtein 相似度匹配）
+- 摘要压缩保真度增强（Critical Preservation Rules）
+- Edit 3 轮渐进模糊匹配（精确 → Rstrip → Strip）
+- bash 命令智能分级（只读命令自动 Safe）
+- 危险等级标签去歧义（safe/modify/danger/blocked）
+- 确认框展示具体命令/路径
+- 思考模式管理：Anthropic 默认 adaptive，DeepSeek 默认关 thinking，两级 finish_reason=length 升级
+- reasoning token 纳入统计
+- edit 工具组内联展开（▍ path + diff 一次可见，无需二次折叠）
+- 跨目录 edit/write 允许（确认框管控）
+- bash 复杂命令显示截断（只展示首行 + …）
+- 工具组展开子项缩进 2 格
+- Search/Fetch 断路器（≥4 次搜索 0 次抓取 → 强制停止）
+- ContextTransform 工具结果监控（>20 条结果提示检查子任务）
+- Task 子 agent 结果内联显示（输出附加到 task 工具块，支持折叠展开）
+
 ---
 
 ## P2 — 生态与体验
 
-### 28. 后台任务 + 进度
+### 29. 后台任务 + 进度
 - 长运行命令流式输出，不阻塞主 Agent 循环
 
-### 29. Checkpoint / Undo
+### 30. Checkpoint / Undo
 - 每次工具写入前自动保存快照
 - `/undo` 命令回滚
 
-### 30. MCP 协议支持
+### 31. MCP 协议支持
 - MCP client，连接外部 tool server
 
-### 31. Session 管理
+### 32. Session 管理
 - 对话存档/恢复，支持分支对话
 
-### 32. Plan 模式
+### 33. Plan 模式
 - 复杂改动先出方案文本，用户审批后执行
 
-### 33. 凭证管理
+### 34. 凭证管理
 - API key 安全存储，多 profile 切换
 
-### 34. 自动化测试
+### 35. 自动化测试
 - Agent 行为回归测试（mock LLM 响应）
 - 工具执行单元测试（mock 文件系统/shell）

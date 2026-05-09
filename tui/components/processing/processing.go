@@ -79,6 +79,18 @@ func (p *ProcessingItem) AddDiffBlock(content string) {
 		}
 	}
 }
+func (p *ProcessingItem) AddTaskOutput(output string) {
+	// Attach sub-agent output to the most recent task tool block so the
+	// user can see what the sub-agent produced.
+	for i := len(p.blocks) - 1; i >= 0; i-- {
+		if p.blocks[i].Type == block.BlockTool && p.blocks[i].ToolName == "task" {
+			p.blocks[i].Content = output
+			p.invalidate()
+			return
+		}
+	}
+}
+
 func (p *ProcessingItem) AddThinkBlock(content string) {
 	p.blocks = append(p.blocks, block.ContentBlock{Type: block.BlockThought, Content: content}); p.invalidate()
 }

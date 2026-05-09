@@ -31,7 +31,7 @@ func (t *WebFetchTool) ExecutionMode(map[string]interface{}) ExecutionMode { ret
 func (t *WebFetchTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
 
 func (t *WebFetchTool) Description() string {
-	return "Fetch web page content and convert to text. Useful for reading docs, API references, etc."
+	return "Fetch web page content and convert to text. Useful for reading docs, API references, etc. When quoting fetched content: (1) keep each quote ≤125 characters, (2) always cite the source URL, (3) use quotation marks for exact language — anything outside quotes must not be word-for-word from the source."
 }
 
 func (t *WebFetchTool) Parameters() []Parameter {

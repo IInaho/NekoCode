@@ -50,6 +50,7 @@ type Agent struct {
 	streamFn             StreamCallback
 	reasoningFn          ReasoningCallback
 	steeringCh           chan string
+	doomLoopHistory      []string // last few tool call signatures for doom loop detection
 	synthesizePrompt     string
 	tokenPrompt          atomic.Int64
 	tokenCompletion      atomic.Int64
@@ -170,6 +171,7 @@ func (a *Agent) Reset() {
 	a.currentStep = 0
 	a.finished = false
 	a.lastReasoningContent = ""
+	a.doomLoopHistory = nil
 	a.tokenPrompt.Store(0)
 	a.tokenCompletion.Store(0)
 	a.tokenCalls.Store(0)

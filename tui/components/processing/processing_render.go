@@ -132,6 +132,12 @@ func (p *ProcessingItem) renderToolGroup(g block.ToolGroupInfo, contentW int) st
 		return accentLine
 	}
 
+	// Edit groups: expand diffs inline (shared with block_render.go).
+	if g.Name == "edit" {
+		return block.RenderEditGroupExpanded(g, contentW, p.sty, accentLine)
+	}
+
+	indent := "  "
 	var sb strings.Builder
 	sb.WriteString(accentLine)
 	all := append([]block.ContentBlock{g.First}, g.Rest...)
@@ -139,7 +145,7 @@ func (p *ProcessingItem) renderToolGroup(g block.ToolGroupInfo, contentW int) st
 		line := block.RenderBlock(b, contentW, p.sty)
 		for _, l := range strings.Split(line, "\n") {
 			if l != "" {
-				sb.WriteString("\n" + l)
+				sb.WriteString("\n" + indent + l)
 			}
 		}
 	}

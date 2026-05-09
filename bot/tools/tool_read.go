@@ -51,8 +51,24 @@ func (t *ReadTool) Execute(ctx context.Context, args map[string]interface{}) (st
 func (t *ReadTool) readText(path string, args map[string]interface{}) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			msg := fmt.Sprintf("File not found: %s", filepath.Base(path))
+			if suggestions := suggestSimilar(path); len(suggestions) > 0 {
+				msg += "\nDid you mean one of these?"
+				for _, s := range suggestions {
+					msg += "\n  - " + s
+				}
+			}
+			return "", fmt.Errorf("%s", msg)
+		}
 		return "", fmt.Errorf("failed to read file: %v", err)
 	}
+
+	if isBinary(content) {
+		return fmt.Sprintf("[Binary file: %s — cannot display. Use bash file or hexdump to inspect.]",
+			filepath.Base(path)), nil
+	}
+
 	text := StripAnsi(string(content))
 	lines := strings.Split(text, "\n")
 	totalLines := len(lines)
@@ -94,6 +110,30 @@ func (t *ReadTool) readText(path string, args map[string]interface{}) (string, e
 	return result, nil
 }
 
+// isBinary detects binary files by checking for null bytes and non-printable
+// character ratio in the first 4096 bytes.
+func isBinary(data []byte) bool {
+	checkLen := 4096
+	if len(data) < checkLen {
+		checkLen = len(data)
+	}
+	if checkLen == 0 {
+		return false
+	}
+	for _, b := range data[:checkLen] {
+		if b == 0 {
+			return true
+		}
+	}
+	nonPrintable := 0
+	for _, b := range data[:checkLen] {
+		if b != '\n' && b != '\r' && b != '\t' && (b < 32 || b > 126) {
+			nonPrintable++
+		}
+	}
+	return float64(nonPrintable)/float64(checkLen) > 0.3
+}
+
 func (t *ReadTool) readImage(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -124,4 +164,87 @@ func (t *ReadTool) readPDF(path string) (string, error) {
 	}
 	return fmt.Sprintf("[PDF] %s — %s, %d bytes. Use head or bash pdftotext to extract content.",
 		filepath.Base(path), sizeStr, size), nil
+}
+
+// suggestSimilar returns up to 3 files in the same directory with names
+// similar to the requested path.
+func suggestSimilar(path string) []string {
+	dir := filepath.Dir(path)
+	base := strings.ToLower(filepath.Base(path))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var scored []struct {
+		path  string
+		score int
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		score := 0
+		if name == base {
+			continue // exact match shouldn't happen for not-found
+		}
+		if strings.Contains(name, base) || strings.Contains(base, name) {
+			score = 10
+		} else if strings.HasPrefix(name, base[:min(3, len(base))]) {
+			score = 5
+		}
+		d := levenshteinDist(name, base)
+		if d <= 3 {
+			score += 8 - d
+		}
+		if score > 0 {
+			scored = append(scored, struct {
+				path  string
+				score int
+			}{filepath.Join(dir, e.Name()), score})
+		}
+	}
+	// Sort by score descending, stable.
+	for i := 0; i < len(scored); i++ {
+		for j := i + 1; j < len(scored); j++ {
+			if scored[j].score > scored[i].score {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+	if len(scored) > 3 {
+		scored = scored[:3]
+	}
+	out := make([]string, len(scored))
+	for i, s := range scored {
+		out[i] = s.path
+	}
+	return out
+}
+
+func levenshteinDist(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	d := make([][]int, len(a)+1)
+	for i := range d {
+		d[i] = make([]int, len(b)+1)
+		d[i][0] = i
+	}
+	for j := 0; j <= len(b); j++ {
+		d[0][j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			d[i][j] = min(d[i-1][j]+1, min(d[i][j-1]+1, d[i-1][j-1]+cost))
+		}
+	}
+	return d[len(a)][len(b)]
 }

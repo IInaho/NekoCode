@@ -95,6 +95,9 @@ func (m *Model) onAgentStep(finalResponse *string) func(int, string, string, str
 			if toolName == "edit" && output != "" {
 				m.Messages.AddDiffBlock(extractDiffContent(output))
 			}
+			if toolName == "task" && output != "" {
+				m.Messages.AddTaskOutput(output)
+			}
 		}
 	}
 }

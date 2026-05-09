@@ -40,17 +40,15 @@ func (c *ConfirmBar) View(width int) string {
 	topBorder := c.sty.Border.Render(styles.Horizontal)
 	titleBar := topBorder + " " + title + " " + strings.Repeat(styles.Horizontal, max(0, w-lipgloss.Width(title)-2))
 
-	path := ""
-	if p, ok := c.req.Args["path"].(string); ok {
-		path = "  " + p
-	}
+	// Show the most informative argument so the user knows what will execute.
+	desc := c.formatDescription()
 
 	level := c.sty.Yellow.Render(c.req.Level.String())
 	if c.req.Level == tools.LevelForbidden {
 		level = c.sty.Red.Render(c.req.Level.String())
 	}
 
-	info := fmt.Sprintf("  %s%s  [%s]", c.req.ToolName, path, level)
+	info := fmt.Sprintf("  %s  [%s]", desc, level)
 	infoW := lipgloss.Width(info)
 	infoLine := c.sty.Base.Render(info)
 
@@ -67,4 +65,32 @@ func (c *ConfirmBar) View(width int) string {
 	b.WriteString(bottomBorder)
 
 	return b.String()
+}
+
+// formatDescription builds a human-readable one-liner for the tool being confirmed.
+func (c *ConfirmBar) formatDescription() string {
+	switch c.req.ToolName {
+	case "bash":
+		if cmd, ok := c.req.Args["command"].(string); ok && cmd != "" {
+			return c.req.ToolName + " " + truncateDesc(cmd, 60)
+		}
+	case "write", "edit":
+		if p, ok := c.req.Args["path"].(string); ok && p != "" {
+			return c.req.ToolName + " " + truncateDesc(p, 60)
+		}
+	case "snip":
+		return "snip (remove old messages)"
+	}
+	// Generic: show path if available.
+	if p, ok := c.req.Args["path"].(string); ok && p != "" {
+		return c.req.ToolName + " " + truncateDesc(p, 60)
+	}
+	return c.req.ToolName
+}
+
+func truncateDesc(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
