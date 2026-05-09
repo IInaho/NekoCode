@@ -15,12 +15,12 @@
 # PrimusBot
 
 <p align="center">
-  <b>终端里的 AI 伙伴</b><br>
-  <sub>软萌猫娘角色 · 能聊天、操作文件、执行命令 · 持续迭代中</sub>
+  <b>终端里的 AI 伙伴，不止于终端</b><br>
+  <sub>开源 · 多模型自由 · 猫娘角色 · Go 单二进制 · 可嵌入的 Agent 核心</sub>
 </p>
 
 <p align="center">
-  <sub>Go · Bubble Tea · OpenAI / Anthropic / GLM / DeepSeek · Native Function Calling</sub>
+  <sub>Anthropic / OpenAI / GLM / DeepSeek · Agent 循环 · 子 Agent 委派 · 上下文管理 · 会话记忆</sub>
 </p>
 
 <br>
@@ -34,42 +34,99 @@
 
 ---
 
-### 亮点
+## 设计理念
 
-**🎨 精心打磨的 TUI 体验**
-- **厚左色条**：角色专属配色（金/teal/蓝/红），lipgloss 块级渲染
-- **工具卡片**：暖金色边框，edit diff 折叠展开（+/- 行着色）+ 同名单行工具组折叠
-- **独立 Scrollbar**：自管理渲染，与消息列表并列排版
-- **💭 思考过程**：实时展示 Agent 推理链，output/reasoning 分区显示
-- **分隔线**：output（teal）和 reasoning（蓝）横跨全宽分隔线，动态 2-6 行高度
-- tokyo-night markdown 主题 + glamour 渲染
+**模型自由，不站队**
 
-**⚡ 轻量高效的 Agent 循环**
-- Reason → Execute → Feedback 三轮循环，最多 15 步
-- 并行工具调度：独立工具 worker pool 并发（上限 10），ctx 取消检查
-- 子 Agent 系统：5 种内置类型（executor/verify/explore/plan/decompose），独立上下文，thinking 关闭
-- BTW 中断：处理中输入 Enter 注入新消息 + 打断 LLM 调用
-- 指数退避重试：0.5s→8s，token 统计防重复
+MIT 开源，代码完全透明。Anthropic、OpenAI、GLM、DeepSeek 统一网关接入，一个工具切换所有模型。今天用 Claude 写代码，明天用 GLM 做中文创意——改一行配置的事。
 
-**🔧 丰富的工具链**
-- bash（全部需确认 + 危险命令拒绝）、read、write、edit（+ diff）、list、glob（支持 **）、grep
-- web_search（Exa MCP）、web_fetch（DNS 安全校验 + 内网拒绝）
-- task（子 agent 委派）、todo_write（任务跟踪）
-- 路径穿越防护、ANSI 清理
+**终端也可以好看**
 
-**🔌 多 Provider 统一网关**
-- Anthropic：SSE content_block_start/delta 流式解析
-- OpenAI / GLM / DeepSeek：统一 OpenAICompatible 实现，thinking 参数控制
-- 共享 HTTP 连接池，ReasoningContent 透传
+厚左色条角色配色、工具卡片折叠展开、diff 高亮内联、思考过程实时分区展示——每个交互细节都经过打磨。终端不是妥协，是选择。
 
-**🧩 组件化解耦**
-- `BotInterface` 17 方法接口，TUI 与 bot 零耦合
-- `bot/tools` Phase/Confirm 类型统一定义，agent 和 TUI 两边引用
-- TUI 38 文件，block/message/processing 三个子包，单一职责
+**纵深防御幻觉**
+
+从 System Prompt 约束、运行时强制校验（先读后改、二进制检测）、末日循环断路器、独立验证 agent、记忆漂移防护、来源引用强制、上下文保真压缩，到思考模式自适应控制——每一层独立生效，层层兜底。
+
+**越聊越懂你**
+
+长对话自动提取结构化笔记——目标、进度、关键决策、下一步行动——写入本地。开新对话时自动注入，不消耗 API token，助理永远记得上次聊到哪了。
+
+**不止于终端**
+
+Bot 核心通过接口与 UI 完全解耦。同样的 Agent，今天跑在终端 TUI 里，明天可以接入 Web GUI、桌面应用、甚至 IM 消息平台——逻辑不改，只换壳。
 
 ---
 
-### 快速开始
+## 功能
+
+| | | | |
+|:--|:--|:--|:--|
+| **对话** | 自然语言交互 · 猫娘角色 | **Shell** | 命令执行 · 4 级安全分级 |
+| **文件** | 读取 · 写入 · 精确编辑 + diff | **搜索** | glob 模式 · ripgrep 内容搜索 · 网页搜索 |
+| **子 Agent** | 5 种类型独立委派 | **记忆** | 长对话自动压缩 · 会话记忆复用 |
+| **确认** | 写入/危险操作弹框确认 | **命令** | `/` 斜杠命令 · 实时补全 |
+| **折叠** | 工具组折叠 · diff 展开 | **多模型** | Anthropic / OpenAI / GLM / DeepSeek |
+
+---
+
+## 命令
+
+| 命令 | |
+|------|------|
+| `/help` | 显示命令列表 |
+| `/new` | 新对话（保留会话记忆） |
+| `/clear` | 清空所有历史 |
+| `/stats` | 上下文用量统计 |
+| `/summarize` | 手动压缩记忆 |
+| `/config` | 当前 provider / model |
+
+输入 `/` 自动弹出补全，Tab 选择，Enter 填入。
+
+---
+
+## 安全分级
+
+| 等级 | 行为 | 示例 |
+|:--|:--|:--|
+| `safe` | 自动放行，无需确认 | `read` `glob` `grep` `ls` `git log` |
+| `modify` | 弹框确认 | `write` `edit` `bash` `mkdir` |
+| `danger` | 红色警告确认 | `rm` `kill` `git push -f` |
+| `forbidden` | 直接拒绝 | `sudo` `curl\|bash` `ssh` `dd` |
+
+bash 命令智能识别——`go build`、`git diff` 等纯输出命令自动降级为 safe，不用每次确认。
+
+---
+
+## 架构理念
+
+```
+┌──────────────────────────────────────┐
+│              TUI / GUI / IM          │  ← 任意前端，通过接口对接
+│         BotInterface (17 methods)    │
+├──────────────────────────────────────┤
+│           Bot Core (独立进程)         │
+│  ┌──────────┐  ┌──────────────────┐  │
+│  │ Agent 循环 │  │  上下文管理器     │  │
+│  │ Reason→   │  │  微压缩+摘要+剪枝 │  │
+│  │ Execute→  │  └──────────────────┘  │
+│  │ Feedback  │  ┌──────────────────┐  │
+│  └──────────┘  │  会话记忆         │  │
+│  ┌──────────┐  └──────────────────┘  │
+│  │ 子 Agent  │  ┌──────────────────┐  │
+│  │ 5 种类型  │  │  工具系统 (12+)   │  │
+│  └──────────┘  └──────────────────┘  │
+├──────────────────────────────────────┤
+│          LLM 统一网关                 │
+│  Anthropic / OpenAI / GLM / DeepSeek │
+└──────────────────────────────────────┘
+```
+
+Bot 核心不依赖任何特定 UI 框架。`BotInterface` 定义了完整的 Agent 交互契约——发送消息、流式回调、工具确认、中止控制。换个前端只需实现这个接口。
+
+---
+
+## 快速开始
 
 ```bash
 mkdir -p ~/.primusbot
@@ -88,77 +145,52 @@ go build -o primusbot .
 # 交互模式
 ./primusbot
 
-# 或单次调用
+# 单次调用
 ./primusbot "帮我看看 main.go 的内容"
 ```
 
 ---
 
-### 功能
+## 路线图
 
-| | | | |
-|:--|:--|:--|:--|
-| **聊天** | 自然对话，软萌猫娘角色 | **Shell** | 本地命令，全部确认 + 危险拒绝 |
-| **文件** | read / write / edit + diff | **搜索** | glob(含**) + ripgrep + web |
-| **子 Agent** | 5 种类型并行委派 | **摘要** | 长对话自动压缩记忆 |
-| **确认** | 写/危险操作弹框确认 | **命令** | `/` 斜杠命令 + 实时提示 |
-| **折叠** | `ctrl+e` 展开 edit 工具 diff | **Provider** | OpenAI / Anth / GLM / DS |
+### 已完成
 
----
+- **Agent 循环**：Reason → Execute → Feedback 三轮循环，并行工具调度，子 Agent 委派
+- **12+ 内置工具**：bash、文件读写编辑、glob/grep 搜索、网页搜索/抓取、任务跟踪
+- **多 Provider 网关**：Anthropic + OpenAI + GLM + DeepSeek 统一接入
+- **三层上下文管理**：微压缩 + 结构化摘要 + 主动剪枝
+- **会话记忆**：异步提取，跨对话复用
+- **9 层防幻觉体系**：纵深防御，层层兜底
+- **Mid-run 中断**：处理中随时纠正方向
+- **指数退避重试**：LLM 调用自动恢复
+- **TUI 组件化**：厚色条、工具卡片、diff 折叠、思考分区
 
-### 命令
+### 进行中
 
-| 命令 | |
-|------|------|
-| `/help` | 显示命令列表 |
-| `/new` | 新对话（保留摘要） |
-| `/clear` | 清空对话历史 |
-| `/stats` | 上下文用量 |
-| `/summarize` | 手动压缩记忆 |
-| `/config` | 当前 provider / model |
+- **项目感知**：自动读取 CLAUDE.md / AGENTS.md，感知项目约定
+- **后台任务**：长命令流式输出，不阻塞主循环
 
-输入 `/` 自动弹出提示，Tab 选择，Enter 填入。
+### 计划中
 
----
-
-### 权限
-
-| 等级 | 行为 | 示例 |
-|:--|:--|:--|
-| `safe` | 自动放行 | `read` `glob` `grep` `list` |
-| `write` | 弹框确认 | `write` `edit` `bash` `mkdir` |
-| `destructive` | 红色确认 | `rm` `kill` `git push -f` |
-| `forbidden` | 直接拒绝 | `sudo` `curl\|bash` `ssh` |
+- **Skill 系统**：可安装的技能包，社区共享。一行命令安装一个专项能力——"配置 ESLint"、"部署到 Vercel"、"生成 CHANGELOG"
+- **MCP 协议支持**：连接外部 MCP server，工具生态无限扩展。数据库查询、K8s 管理、监控告警——任何 MCP server 都是 PrimusBot 的工具
+- **Web GUI**：Bot 核心通过接口解耦，Web 前端无缝对接。同一个 Agent，浏览器里用
+- **IM 接入**：对接企业微信、飞书、Slack，Bot 作为全天候托管 Agent。早上收到任务，晚上回来验收——全程在 IM 里完成
+- **Plan 模式**：复杂改动先出方案文本，用户审批后自动执行
+- **Checkpoint / Undo**：每次写入前自动快照，随时回滚
+- **Session 管理**：对话存档恢复，支持分支对话
+- **凭证管理**：多 profile 安全切换，开发/生产环境隔离
 
 ---
 
-### 结构
+## 文档
 
-```
-primusbot/
-├── main.go             入口
-├── llm/                LLM 网关：Anthropic / OpenAI 兼容（5 文件）
-├── bot/
-│   ├── bot.go          核心组装
-│   ├── config.go        配置加载
-│   ├── commands.go      斜杠命令系统
-│   ├── session/         Session Memory（异步提取）
-│   ├── ctxmgr/          上下文管理（5 文件）
-│   ├── tools/           工具系统（19 文件，12 工具 + 基础设施）
-│   └── agent/           Agent 循环 + 子 agent 引擎
-└── tui/                终端 UI（38 文件，block/message/processing 子包）
-```
+- [架构文档](docs/ARCHITECTURE.md) — Agent 循环 · 数据流 · 上下文管理
+- [设计文档](docs/DESIGN.md) — 交互设计 · 视觉方案 · 防幻觉
+- [开发路线](docs/PLAN.md) — 已完成 & 计划中
 
 ---
 
-### 文档
-
-- [架构文档](docs/ARCHITECTURE.md) — Agent 循环 · 数据流 · 上下文管理 · 组件树
-- [设计文档](docs/DESIGN.md) — 交互设计 · 视觉方案 · 权限分级 · 子 Agent
-- [开发路线](docs/PLAN.md) — 已完成 & 后续计划
-
----
-
-### License
+## License
 
 MIT
