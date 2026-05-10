@@ -6,6 +6,13 @@ func (m *Manager) Add(role, content string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages = append(m.messages, llm.Message{Role: role, Content: content})
+
+	// Auto-extract critical constraints from user messages.
+	if role == "user" && m.anchor != nil {
+		for _, c := range m.anchor.ExtractConstraints(content) {
+			m.anchor.AddConstraint(c)
+		}
+	}
 }
 
 func (m *Manager) AddAssistantResponse(content, reasoning string) {
@@ -70,5 +77,6 @@ func (m *Manager) Clear() {
 	defer m.mu.Unlock()
 	m.messages = make([]llm.Message, 0)
 	m.summary = ""
+	m.compactBoundary = 0
 	m.todoText = ""
 }

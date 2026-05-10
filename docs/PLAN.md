@@ -32,7 +32,7 @@
 
 ### 6. 项目感知上下文 🟡
 - ✅ working directory 作为 system-reminder 注入
-- ❌ CLAUDE.md / AGENTS.md 读取
+- ✅ NEKOCODE.md 自动发现 + @include 递归加载（~/.nekocode/ → 项目根/ → .nekocode/ → rules/）
 - ❌ .gitignore 排除
 
 ### 7. Web Search / Fetch ✅
@@ -162,29 +162,62 @@
 - ContextTransform 工具结果监控（>20 条结果提示检查子任务）
 - Task 子 agent 结果内联显示（输出附加到 task 工具块，支持折叠展开）
 
+### 29. Skill 系统 ✅
+- YAML 定义技能工作流（Ref / Prompt / Tool / Invoke 步骤类型）
+- `.claude/skills/` 目录自动发现
+- 工作流注入 system prompt
+- `/<skill-name>` 斜杠命令触发
+- `/skill` 工具供 Agent 调用
+
+### 30. 上下文锚点 ✅
+- 压缩前自动标记关键用户指令和系统约束
+- 正则匹配保留 API 版本要求等关键信息
+
+### 31. 摘要验证 ✅
+- LLM 生成的摘要经二次 LLM 校验
+- 检查代码片段、错误信息、文件路径等关键内容是否丢失
+
+### 32. 文件缓存 ✅
+- `GlobalFileCache`：LRU 驱逐（100 条目 / 25MB 上限）
+- mtime + offset + limit 精确去重
+- 跨子 Agent 共享同一缓存实例
+
+### 33. 五级预警自动压缩 ✅
+- Normal → Warning → MicroCompact → Compact → Blocking
+- `AutoCompactIfNeeded()` 每次 Build() 前自动判定
+
+### 34. BoltDB 持久化 ✅
+- 对话历史持久存储，重启不丢失
+- `ctxmgr/storage.go` 管理存取
+
+### 35. NEKOCODE.md 项目上下文 ✅
+- 多层级目录发现（~/.nekocode/ → 项目根/ → .nekocode/ → rules/）
+- @include 递归引用（最大深度 3）
+- 40K 字符预算
+
 ---
 
 ## P2 — 生态与体验
 
-### 29. 后台任务 + 进度
+### 36. 后台任务 + 进度
 - 长运行命令流式输出，不阻塞主 Agent 循环
 
-### 30. Checkpoint / Undo
+### 37. Checkpoint / Undo
 - 每次工具写入前自动保存快照
 - `/undo` 命令回滚
 
-### 31. MCP 协议支持
+### 38. MCP 协议支持
 - MCP client，连接外部 tool server
 
-### 32. Session 管理
+### 39. Session 管理
 - 对话存档/恢复，支持分支对话
 
-### 33. Plan 模式
+### 40. Plan 模式
 - 复杂改动先出方案文本，用户审批后执行
 
-### 34. 凭证管理
+### 41. 凭证管理
 - API key 安全存储，多 profile 切换
 
-### 35. 自动化测试
+### 42. 自动化测试
 - Agent 行为回归测试（mock LLM 响应）
 - 工具执行单元测试（mock 文件系统/shell）

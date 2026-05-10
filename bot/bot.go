@@ -11,8 +11,10 @@ import (
 	_ "embed"
 	"nekocode/bot/agent"
 	"nekocode/bot/agent/subagent"
+	bctx "nekocode/bot/context"
 	"nekocode/bot/ctxmgr"
 	"nekocode/bot/session"
+	"nekocode/bot/skill"
 	"nekocode/bot/tools"
 	"nekocode/llm"
 )
@@ -24,6 +26,7 @@ type Bot struct {
 	ag        *agent.Agent
 	sessMem   *session.Memory
 	extractor *session.Extractor
+	skillReg  *skill.Registry
 }
 
 //go:embed prompt/system.md
@@ -42,6 +45,14 @@ func New() *Bot {
 	// so the system prompt stays lean for prompt caching.
 	if cwd, err := os.Getwd(); err == nil {
 		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\nWorking directory: %s\nToday's date is %s. Use this for web searches and file timestamps.\nUse list/glob to explore, read when needed.\n</system-reminder>", cwd, time.Now().Format("2006-01-02")))
+
+		// Preload project context (NEKOCODE.md files) to avoid repeated
+		// glob/grep/read exploration at the start of every conversation.
+		if projCtx := bctx.LoadProjectContext(cwd); projCtx != "" {
+			ctxMgr.Add("system", projCtx)
+		}
+	} else {
+		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\nToday's date is %s.\n</system-reminder>", time.Now().Format("2006-01-02")))
 	}
 	ctxMgr.SetTokenBudget(cfg.TokenBudget)
 
@@ -78,6 +89,17 @@ func New() *Bot {
 	toolRegistry := tools.NewRegistry()
 	tools.RegisterDefaults(toolRegistry)
 
+	// Init global file state cache for read dedup (Phase 2).
+	tools.GlobalFileCache = tools.NewFileStateCache()
+
+	// Skill system: discover, load, and register the skill tool.
+	skillReg := skill.NewRegistry()
+	if err := skillReg.Load(skill.DefaultDirs()); err != nil {
+		fmt.Fprintf(os.Stderr, "skill: load error: %v\n", err)
+	}
+	toolRegistry.Register(skill.NewSkillTool(skillReg))
+	ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), nil, 64000))
+
 	cmdParser := NewParser()
 
 	sessID := fmt.Sprintf("session-%d", time.Now().Unix())
@@ -94,6 +116,7 @@ func New() *Bot {
 		ag:        agent.New(ctx, ctxMgr, llmClient, toolRegistry),
 		sessMem:   sessMem,
 		extractor: sessExt,
+		skillReg:  skillReg,
 	}
 
 	// Sub-agent engine uses a separate LLM client with thinking disabled.
@@ -158,6 +181,38 @@ func New() *Bot {
 	}
 	RegisterDefaultCommands(b.cmdParser, callbacks)
 
+	// Register each skill as a slash command (/skill-name).
+	for _, sk := range skillReg.List() {
+		name := sk.Name
+		b.cmdParser.Register(name, func(cmd *Command) (string, bool) {
+			sk, ok := skillReg.Get(name)
+			if !ok {
+				return fmt.Sprintf("Skill %q not found.", name), true
+			}
+			ctxMgr.Add("user", skill.FormatForContext(sk))
+			skillReg.MarkLoaded(name)
+			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), 64000))
+
+			// No arguments: just load the skill and confirm.
+			if len(cmd.Args) == 0 {
+				return fmt.Sprintf("Loaded skill %q. Type your request to use it.", name), true
+			}
+
+			// Has arguments: inject clean prompt (strip /cmd prefix) and start agent.
+			prompt := strings.Join(cmd.Args, " ")
+			ctxMgr.Add("user", prompt)
+			return "", false
+		})
+	}
+
+	// Wire skill tool OnLoad so model-loaded skills are marked and excluded.
+	if t, err := toolRegistry.Get("skill"); err == nil {
+		t.(*skill.SkillTool).SetOnLoad(func(name string) {
+			skillReg.MarkLoaded(name)
+			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), 64000))
+		})
+	}
+
 	// Wire snip tool so the model can proactively prune history.
 	b.WireSnip()
 
@@ -178,8 +233,20 @@ func (b *Bot) ExecuteCommand(input string) (string, bool) {
 }
 
 func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string, batchIdx, batchTotal int)) (string, error) {
+	// Extract goal from first substantive user message.
+	if anchor := b.ctxMgr.Anchor(); anchor != nil && anchor.Goal() == "" {
+		anchor.ExtractGoalFromUserMessage(input)
+	}
+
 	result := b.ag.Run(input, onStep)
 	b.SummarizeIfNeeded()
+
+	// Update goal from session memory after each turn.
+	if anchor := b.ctxMgr.Anchor(); anchor != nil {
+		if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() {
+			anchor.ExtractGoalFromSessionMemory(content)
+		}
+	}
 
 	// Trigger async session memory extraction if thresholds are met.
 	_, tokens, _ := b.ctxMgr.Stats()
@@ -223,9 +290,18 @@ func (b *Bot) SetPhaseFn(fn tools.PhaseFunc) {
 func (b *Bot) SetCtxTodos(text string) { b.ctxMgr.SetTodos(text) }
 
 func (b *Bot) SummarizeIfNeeded() {
-	if b.ctxMgr.NeedsSummarization() {
-		_ = b.ctxMgr.Summarize()
+	if !b.ctxMgr.NeedsSummarization() {
+		return
 	}
+
+	// Try session memory first (free, no API call).
+	if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() && len(content) > 100 {
+		_ = b.ctxMgr.SummarizeWithSessionMemory(content)
+		return
+	}
+
+	// Fall back to LLM summarizer.
+	_ = b.ctxMgr.Summarize()
 }
 
 func (b *Bot) ForceSummarize() (string, error) {

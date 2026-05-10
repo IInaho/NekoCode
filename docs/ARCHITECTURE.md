@@ -25,12 +25,23 @@ nekocode/
 │   ├── session/                    #   Session Memory
 │   │   ├── memory.go               #     Memory 结构体 + Extractor（异步提取）
 │   │   └── memory_template.md      #     [embed] 10 section 结构化笔记模板
+│   ├── context/                    #   项目上下文
+│   │   └── project.go              #     NEKOCODE.md 发现 + @include 递归加载
+│   ├── skill/                      #   Skill 系统
+│   │   ├── skill.go                #     Registry + Workflow 类型 + 运行时引擎
+│   │   ├── discovery.go            #     .claude/skills/ 目录发现
+│   │   ├── inject.go               #     技能工作流注入 system prompt
+│   │   ├── loader.go               #     YAML 技能加载器
+│   │   └── tool_skill.go           #     /skill 工具触发技能执行
 │   ├── ctxmgr/                     #   上下文管理
 │   │   ├── manager.go              #     Manager 结构体 + Build() 上下文组装 + 统计
 │   │   ├── compact.go              #     微压缩：token 紧张时清除旧工具结果
-│   │   ├── storage.go              #     消息存取：Add/AddToolResult/Clear/FreshStart
-│   │   ├── token.go                #     Token 估算（CJK ~1.5/token, ASCII ~4/token）
-│   │   └── summarize.go            #     结构化摘要：NeedsSummarization/Summarize/BuildPrompt
+│   │   ├── anchor.go               #     上下文锚点：压缩时保留关键用户指令和系统约束
+│   │   ├── auto_compact.go         #     五级预警自动压缩看门狗
+│   │   ├── summarize.go            #     结构化摘要：NeedsSummarization/Summarize/BuildPrompt
+│   │   ├── summarize_verify.go     #     摘要验证：LLM 生成的摘要二次校验后写入
+│   │   ├── storage.go              #     消息存取：Add/AddToolResult/Clear/FreshStart + BoltDB 持久化
+│   │   └── token.go                #     Token 估算（CJK ~1.5/token, ASCII ~4/token）
 │   ├── tools/                      #   工具系统（每工具一文件）
 │   │   ├── tool.go                 #     Tool 接口、Registry、DangerLevel、ExecutionMode
 │   │   ├── util.go                 #     StripAnsi、TruncateByRune、validatePath、SplitPairs、NewToolHTTPClient
@@ -38,6 +49,8 @@ nekocode/
 │   │   ├── descriptor.go           #     ToToolDefs()：Descriptor → LLM ToolDef 转换（共享）
 │   │   ├── confirm.go              #     ConfirmRequest、ConfirmFunc、PhaseFunc、Phase 常量
 │   │   ├── executor.go             #     Executor：并行/串行调度、危险分级检查、用户确认
+│   │   ├── guard.go                #     安全门控：敏感工具操作确认提示
+│   │   ├── file_cache.go           #     FileStateCache：LRU + mtime 去重，跨子 Agent 共享
 │   │   ├── tool_bash.go            #     BashTool — Shell 命令 + 四级危险分级
 │   │   ├── tool_read.go            #     ReadTool — 文件读取（文本/图片/PDF）
 │   │   ├── tool_write.go           #     WriteTool — 文件创建/覆写
@@ -114,6 +127,8 @@ nekocode/
 ```
 main
   ├── bot ──────┬── session ──── ctxmgr + llm
+  │             ├── context ─── (stdlib)
+  │             ├── skill ────── tools + ctxmgr + llm
   │             ├── agent ───┬── tools ─── llm
   │             │            ├── ctxmgr ─── llm
   │             │            ├── llm
@@ -132,6 +147,8 @@ main
 - `tools` 是整个系统的基础层：Tool 接口、Registry、Executor、Phase 类型、Confirm 类型
 - `subagent` 与 `agent` 共享 `tools.Executor`，保证工具安全检查一致
 - `session` 异步 goroutine 提取，依赖 `ctxmgr` 构建上下文
+- `skill` 技能系统，YAML 定义工作流，运行时引擎执行
+- `context` 项目上下文预加载，NEKOCODE.md 发现与 @include 递归
 - `tui/components/block` 导出 `BuildToolGroups` 和 `ToolGroupInfo`，streaming 和 message 两边共用
 
 ## 核心架构：Agent 循环
@@ -178,6 +195,26 @@ main
 ```
 
 ## 上下文管理
+
+### 五级预警 + 自动压缩
+
+`AutoCompactIfNeeded()` 在每次 `Build()` 前运行，根据剩余 token buffer 触发不同级别操作：
+
+| Level | 剩余 buffer | 动作 |
+|-------|------------|------|
+| Normal | > 20,000 | 无操作 |
+| Warning | ≤ 20,000 | 无操作（仅告警） |
+| MicroCompact | ≤ 13,000 | 触发微压缩 |
+| Compact | ≤ 10,000 | 触发完整压缩（Session Memory → LLM Summarize） |
+| Blocking | ≤ 3,000 | 拒绝新输入，强制压缩 |
+
+### 上下文锚点
+
+`anchor.go` 在压缩前标记关键消息——包含用户核心指令、系统约束、API 版本要求等的消息在压缩时优先保留，防止关键信息被误清除。
+
+### 摘要验证
+
+`summarize_verify.go` 在 LLM 生成摘要后执行二次校验：检查摘要是否保留了代码片段、错误信息、文件路径等关键内容，验证失败则重新生成。
 
 ### 微压缩
 
@@ -237,6 +274,14 @@ bash 命令智能分级：匹配 `go version`、`git log`、`git diff`、`ls`、
 ### 路径安全
 
 `write` 和 `edit` 通过 `validatePath()` 解析符号链接并返回绝对路径。跨工作目录的路径不再被拒绝——确认系统处理用户同意。
+
+### 文件缓存
+
+`GlobalFileCache`（`tools/file_cache.go`）在多次 read 调用间缓存文件内容。LRU 驱逐策略（100 条目 / 25MB 上限），基于文件 mtime + offset + limit 的精确去重。子 Agent 自动共享同一缓存实例。缓存命中时返回 `[File unchanged: ...]` stub，避免重复磁盘 I/O。
+
+### 安全门控
+
+`guard.go` 为敏感工具（bash、write、edit）提供统一的确认提示入口。根据工具和参数计算 DangerLevel，LevelWrite 及以上触发用户确认流程。
 
 ## 幻觉防治体系
 
@@ -360,8 +405,10 @@ type LLM interface {
 | **子 Agent** | `bot/agent/subagent/` | 独立循环，thinking 禁用，共享 tools.Executor |
 | **LLM 网关** | `llm/` | 统一对接多 provider，共享 HTTP 连接池，流式解析 |
 | **工具系统** | `bot/tools/` | Tool 接口 + Executor + DangerLevel + 路径安全 + Phase 类型 |
-| **上下文管理** | `bot/ctxmgr/` | 滑动窗口 + 微压缩 + 结构化摘要 + Snip |
+| **上下文管理** | `bot/ctxmgr/` | 五级预警 + 滑动窗口 + 微压缩 + 锚点 + 摘要验证 + Snip + BoltDB |
 | **Session Memory** | `bot/session/` | 异步 Markdown 提取，免费摘要 |
+| **Skill 系统** | `bot/skill/` | YAML 技能定义 + 发现 + 注入 + 运行时引擎 |
+| **项目上下文** | `bot/context/` | NEKOCODE.md 发现 + @include 递归加载 |
 | **Bot 组装** | `bot/bot.go` | 依赖注入，ShouldStop，ContextTransform，session 接线 |
 | **命令系统** | `bot/commands.go` | 斜杠命令解析与注册 |
 | **配置** | `bot/config.go` | `~/.nekocode/config.json` 加载 |
@@ -383,3 +430,5 @@ type LLM interface {
 ```
 
 `~/.nekocode/sessions/<id>/memory.md` — 自动创建的 session memory 文件。
+
+BoltDB 数据库用于对话历史的持久存储（`bot/ctxmgr/storage.go`），确保重启后对话不丢失。

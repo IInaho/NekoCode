@@ -160,6 +160,12 @@ func (e *Executor) executeOne(ctx context.Context, tc ToolCallItem) ToolCallResu
 	}
 	output = TruncateOutput(output)
 
+	// Defense-in-depth: wrap tool output with boundary markers so the model
+	// can visually distinguish tool results from conversation and system prompts.
+	// Then scan for instruction-like patterns that could cause prompt injection.
+	output = WrapToolOutput(tc.Name, tc.ID, output)
+	output = GuardToolOutput(output)
+
 	// Track successful reads for read-before-write enforcement.
 	if tc.Name == "read" {
 		if path, ok := tc.Args["path"].(string); ok && path != "" {

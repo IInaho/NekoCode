@@ -84,7 +84,7 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) resizeMessages() {
 	extra := 0
 	if m.state == stateConfirming {
-		extra = m.ConfirmBar.Height()
+		extra = m.ConfirmBar.Height(m.Width)
 	}
 	m.Messages.SetSize(m.Width-1, m.Height-m.Header.Height()-m.Input.Height()-contentMarginV-extra)
 }

@@ -78,6 +78,7 @@ func RegisterDefaultCommands(p *Parser, callbacks *CommandCallbacks) {
   /stats       Show context stats (messages, tokens, summary)
   /summarize   Force context compression now
   /config      Show current provider and model
+  /<skill>     Load a skill's workflow (see Available Skills in context)
 `, true
 	})
 

@@ -63,10 +63,8 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) (string, error) {
 		default:
 		}
 
-		// Auto-compact when approaching the token budget.
-		if ctxMgr.NeedsSummarization() {
-			_ = ctxMgr.Summarize()
-		}
+		// Proactive auto-compact before each LLM call.
+		ctxMgr.AutoCompactIfNeeded(ctxMgr.GetAutoCompactConfig(), nil)
 
 		calls, text, err := e.reason(ctx, ctxMgr, cfg.AgentType.Tools, cfg.AddTokens, phase)
 		if err != nil {
@@ -121,7 +119,7 @@ func (e *Engine) reason(ctx context.Context, mgr *ctxmgr.Manager, allowed []stri
 
 	firstAttempt := true
 	err := llm.Retry(ctx, llm.DefaultRetryConfig, func() error {
-		mgr.MicroCompactIfNeeded()
+		mgr.AutoCompactIfNeeded(mgr.GetAutoCompactConfig(), nil)
 		messages := mgr.Build(true)
 		toolDefs := e.filteredToolDefs(allowed)
 
@@ -165,21 +163,24 @@ func (e *Engine) reason(ctx context.Context, mgr *ctxmgr.Manager, allowed []stri
 			if token.ReasoningContent != "" {
 				reasoningBuf.WriteString(token.ReasoningContent)
 			}
-			if token.ToolCallDelta != nil {
-				idx := token.ToolCallDelta.Index
-				acc := tcAccum[idx]
-				if acc == nil {
-					acc = &toolAccum{}
-					tcAccum[idx] = acc
+				if token.ToolCallDelta != nil {
+					idx := token.ToolCallDelta.Index
+					acc := tcAccum[idx]
+					if acc == nil {
+						acc = &toolAccum{}
+						tcAccum[idx] = acc
+					}
+					if token.ToolCallDelta.ID != "" {
+						acc.id = token.ToolCallDelta.ID
+					}
+					if token.ToolCallDelta.Name != "" {
+						acc.name = token.ToolCallDelta.Name
+					}
+					acc.args.WriteString(token.ToolCallDelta.Arguments)
+					if addTokens != nil {
+						addTokens(0, 1)
+					}
 				}
-				if token.ToolCallDelta.ID != "" {
-					acc.id = token.ToolCallDelta.ID
-				}
-				if token.ToolCallDelta.Name != "" {
-					acc.name = token.ToolCallDelta.Name
-				}
-				acc.args.WriteString(token.ToolCallDelta.Arguments)
-			}
 		}
 
 		select {
@@ -224,7 +225,7 @@ func (e *Engine) reason(ctx context.Context, mgr *ctxmgr.Manager, allowed []stri
 func (e *Engine) forceSynthesize(ctx context.Context, mgr *ctxmgr.Manager) string {
 	var text string
 	_ = llm.Retry(ctx, llm.DefaultRetryConfig, func() error {
-		mgr.MicroCompactIfNeeded()
+		mgr.AutoCompactIfNeeded(mgr.GetAutoCompactConfig(), nil)
 		messages := mgr.Build(false)
 		messages = append(messages, llm.Message{
 			Role:    "user",

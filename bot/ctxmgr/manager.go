@@ -10,16 +10,21 @@ import (
 type Summarizer func(msgs []llm.Message, prevSummary string) (string, error)
 
 type Manager struct {
-	mu           sync.RWMutex
-	systemPrompt string
-	todoText     string // current todo list, injected into every LLM call
-	messages     []llm.Message
-	snipped      map[int]bool // indices of snipped messages (removed by model)
-	summary      string
-	windowSize   int
-	tokenBudget  int
-	summarizer   Summarizer
-	compactCount int // cumulative tool results cleared by microCompact
+	mu              sync.RWMutex
+	systemPrompt    string
+	todoText        string // current todo list, injected into every LLM call
+	skillList       string // available skills, injected into every LLM call
+	messages        []llm.Message
+	snipped         map[int]bool // indices of snipped messages (removed by model)
+	summary         string
+	compactBoundary int    // messages before this index are behind the summary
+	windowSize      int
+	tokenBudget     int
+	summarizer      Summarizer
+	compactCount    int            // cumulative tool results cleared by microCompact
+	tokenTracker    *TokenTracker   // accurate token tracking from API responses
+	autoCompactCfg  AutoCompactConfig
+	anchor          *Anchor        // immutable critical constraints + goal, never compressed
 }
 
 const (
@@ -29,16 +34,35 @@ const (
 
 func New(systemPrompt string) *Manager {
 	return &Manager{
-		systemPrompt: systemPrompt,
-		messages:     make([]llm.Message, 0),
-		snipped:      make(map[int]bool),
-		windowSize:   defaultWindowSize,
-		tokenBudget:  defaultTokenBudget,
+		systemPrompt:   systemPrompt,
+		messages:       make([]llm.Message, 0),
+		snipped:        make(map[int]bool),
+		windowSize:     defaultWindowSize,
+		tokenBudget:    defaultTokenBudget,
+		tokenTracker:   &TokenTracker{},
+		autoCompactCfg: DefaultAutoCompactConfig,
+		anchor:         &Anchor{},
 	}
 }
 
-func (m *Manager) SetSummarizer(fn Summarizer) { m.summarizer = fn }
-func (m *Manager) SetSummary(s string)         { m.summary = s }
+func (m *Manager) SetSummarizer(fn Summarizer)       { m.summarizer = fn }
+func (m *Manager) SetSummary(s string)               { m.summary = s }
+func (m *Manager) SetSkillList(s string)             { m.skillList = s }
+func (m *Manager) SetAutoCompactConfig(cfg AutoCompactConfig) { m.autoCompactCfg = cfg }
+func (m *Manager) GetAutoCompactConfig() AutoCompactConfig  { return m.autoCompactCfg }
+func (m *Manager) RecordUsage(prompt, completion int)        { m.tokenTracker.RecordUsage(prompt, completion) }
+func (m *Manager) Anchor() *Anchor                            { return m.anchor }
+
+// AccurateTokens returns token count calibrated against last API usage.
+func (m *Manager) AccurateTokens() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	// Use tracker if it has real data, otherwise fall back to heuristic.
+	if t := m.tokenTracker.Total(); t > 0 {
+		return t
+	}
+	return m.estimatedTokens()
+}
 
 func (m *Manager) SetTokenBudget(budget int) {
 	if budget > 0 {
@@ -137,6 +161,7 @@ func (m *Manager) FreshStart() {
 	defer m.mu.Unlock()
 	m.messages = make([]llm.Message, 0)
 	m.snipped = make(map[int]bool)
+	m.compactBoundary = 0
 	m.todoText = ""
 }
 
@@ -151,8 +176,20 @@ func (m *Manager) Build(withTools bool) []llm.Message {
 		out = append(out, llm.Message{Role: "system", Content: m.systemPrompt})
 	}
 
+	// Immutable anchor: critical constraints + current goal.
+	// Never compressed, never evicted. Model sees this before everything.
+	if m.anchor != nil {
+		if anchorText := m.anchor.BuildAnchor(); anchorText != "" {
+			out = append(out, llm.Message{Role: "system", Content: anchorText})
+		}
+	}
+
 	if m.todoText != "" {
 		out = append(out, llm.Message{Role: "system", Content: "[Task progress]\n" + m.todoText})
+	}
+
+	if m.skillList != "" {
+		out = append(out, llm.Message{Role: "system", Content: m.skillList})
 	}
 
 	if m.summary != "" {
@@ -163,6 +200,12 @@ func (m *Manager) Build(withTools bool) []llm.Message {
 	}
 
 	kept := m.messages
+	// Start after compact boundary if a summary exists.
+	if m.compactBoundary > 0 && m.summary != "" {
+		if m.compactBoundary < len(m.messages) {
+			kept = m.messages[m.compactBoundary:]
+		}
+	}
 	if len(kept) > m.windowSize {
 		kept = kept[len(kept)-m.windowSize:]
 	}
@@ -187,7 +230,7 @@ func (m *Manager) Build(withTools bool) []llm.Message {
 	}
 
 	// Map from original message index (in m.messages) to kept offset.
-	origBase := 0
+	origBase := m.compactBoundary
 	if len(kept) < len(m.messages) {
 		origBase = len(m.messages) - len(kept)
 	}

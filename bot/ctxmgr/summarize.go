@@ -18,32 +18,253 @@ func (m *Manager) NeedsSummarization() bool {
 	return m.estimatedTokens() > m.tokenBudget*8/10
 }
 
-// Summarize compresses the oldest messages via the configured summarizer.
+// Summarize compresses messages before the compact boundary via the configured
+// summarizer. Messages are preserved (not dropped) — the compact boundary is
+// updated so Build() only sends post-boundary messages, with the summary
+// replacing older content.
 func (m *Manager) Summarize() error {
+	return m.summarizeInternal(false, "")
+}
+
+// SummarizeWithSessionMemory uses pre-extracted session memory content as the
+// summary instead of calling the LLM summarizer. This is the "free" summary path.
+func (m *Manager) SummarizeWithSessionMemory(smContent string) error {
+	if smContent == "" {
+		return nil
+	}
+	return m.summarizeInternal(true, smContent)
+}
+
+func (m *Manager) summarizeInternal(useSessionMemory bool, smContent string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.summarizer == nil {
+	if m.summarizer == nil && !useSessionMemory {
 		return nil
 	}
 
 	keep := m.windowSize / 2
+	if keep < 2 {
+		keep = 2
+	}
+
+	// Tail preservation: ensure the last N user turns are never split or
+	// compressed. This prevents recency bias from causing goal drift in
+	// long conversations. Scan backward from the end to find the boundary
+	// of the last 3 user messages, and extend keep to include them.
+	const preserveTurns = 3
+	tailKeep := m.countMessagesForLastNTurns(preserveTurns)
+	if tailKeep > keep {
+		keep = tailKeep
+	}
+
 	if len(m.messages) <= keep {
 		return nil
 	}
 
 	split := len(m.messages) - keep
-	toSummarize := make([]llm.Message, split)
-	copy(toSummarize, m.messages[:split])
 
-	newSummary, err := m.summarizer(toSummarize, m.summary)
-	if err != nil {
-		return fmt.Errorf("summarize: %w", err)
+	// Only summarize messages after the previous compact boundary.
+	// Messages before compactBoundary were already summarized — don't
+	// re-send them to the LLM unnecessarily.
+	start := m.compactBoundary
+	if split <= start {
+		// Nothing new to compress beyond the existing boundary.
+		return nil
 	}
 
-	m.summary = newSummary
-	m.messages = m.messages[split:]
+	if useSessionMemory {
+		// Free summary from session memory.
+		m.summary = smContent
+	} else {
+		toSummarize := make([]llm.Message, split-start)
+		copy(toSummarize, m.messages[start:split])
+
+		newSummary, err := m.summarizer(toSummarize, m.summary)
+		if err != nil {
+			return fmt.Errorf("summarize: %w", err)
+		}
+		m.summary = newSummary
+
+			// Verify critical constraints survived compression.
+			if missing := m.verifySummary(newSummary); len(missing) > 0 {
+				verifyPrompt := BuildVerifyPrompt(toSummarize, m.summary, missing)
+				if rs, re := m.summarizer([]llm.Message{{Role: "user", Content: verifyPrompt}}, m.summary); re == nil && rs != "" {
+					newSummary = rs
+				}
+			}
+	}
+
+	// Move the compact boundary forward to this split point.
+	// Messages before the boundary are preserved (not dropped) for:
+	//   - session memory extraction (needs full history)
+	//   - stable [id:N] indices for the snip tool
+	//   - post-compact file re-creation
+	// Build() only sends messages after compactBoundary.
+	m.compactBoundary = split
+
+	// Trim very old messages (before compactBoundary) to prevent unbounded growth.
+	// Keep at most 200 messages before the boundary for memory extraction context.
+	const maxPreservedBeforeBoundary = 200
+	if m.compactBoundary > maxPreservedBeforeBoundary {
+		trim := m.compactBoundary - maxPreservedBeforeBoundary
+		m.messages = m.messages[trim:]
+		m.compactBoundary -= trim
+		// Rebuild snipped map with adjusted indices so snip still targets
+		// the correct messages after the shift.
+		oldSnipped := m.snipped
+		m.snipped = make(map[int]bool, len(oldSnipped))
+		for idx := range oldSnipped {
+			if idx >= trim {
+				m.snipped[idx-trim] = true
+			}
+			// idx < trim → message was trimmed away, drop it.
+		}
+	}
+
 	return nil
+}
+
+// countMessagesForLastNTurns counts the number of messages belonging to the
+// last n user turns. Scans backward from the end, counting a "turn" from the
+// user message through all subsequent assistant/tool messages.
+// Must be called with the write lock held.
+func (m *Manager) countMessagesForLastNTurns(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	turns := 0
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == "user" {
+			turns++
+			if turns >= n {
+				return len(m.messages) - i
+			}
+		}
+	}
+	return len(m.messages) // fewer than n turns total, preserve all
+}
+
+// CompactBoundary returns the current compact boundary index.
+func (m *Manager) CompactBoundary() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.compactBoundary
+}
+
+// PostCompactFiles scans messages that were compressed and re-injects the
+// most recently read files from the FileStateCache as context attachments.
+// This mirrors Claude Code's post-compact file re-creation.
+// Returns formatted file content ready for injection as a system message.
+func (m *Manager) PostCompactFiles(readFileCache interface{}) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.compactBoundary <= 0 || m.summary == "" {
+		return ""
+	}
+
+	// Scan compressed messages for Read tool calls.
+	type fileRef struct {
+		path  string
+		index int // higher = more recent
+	}
+	seen := make(map[string]bool)
+	var refs []fileRef
+
+	for i := 0; i < m.compactBoundary && i < len(m.messages); i++ {
+		msg := m.messages[i]
+		if msg.Role == "assistant" {
+			for _, tc := range msg.ToolCalls {
+				if tc.Function.Name == "read" {
+					// Extract path from arguments (simple scan).
+					args := tc.Function.Arguments
+					path := extractPathFromArgs(args)
+					if path != "" && !seen[path] {
+						seen[path] = true
+						refs = append(refs, fileRef{path, i})
+					}
+				}
+			}
+		}
+	}
+
+	// Sort by index descending (most recent first), keep last 5.
+	for i := 0; i < len(refs); i++ {
+		for j := i + 1; j < len(refs); j++ {
+			if refs[j].index > refs[i].index {
+				refs[i], refs[j] = refs[j], refs[i]
+			}
+		}
+	}
+	if len(refs) > 5 {
+		refs = refs[:5]
+	}
+
+	if len(refs) == 0 {
+		return ""
+	}
+
+	// Build the file context attachment.
+	var b strings.Builder
+	b.WriteString("[Recently read files from compressed context]\n")
+	totalBudget := 20000 // 20K chars budget for file re-creation
+	for _, ref := range refs {
+		if totalBudget <= 0 {
+			break
+		}
+		// Try to get from FileStateCache if available.
+		content := getCachedFileContent(readFileCache, ref.path)
+		if content == "" {
+			continue
+		}
+		if len(content) > totalBudget {
+			content = content[:totalBudget] + "\n..."
+		}
+		b.WriteString(fmt.Sprintf("\n### %s\n%s\n", ref.path, content))
+		totalBudget -= len(content)
+	}
+	return b.String()
+}
+
+// extractPathFromArgs extracts the "path" value from a JSON tool call arguments string.
+func extractPathFromArgs(args string) string {
+	// Simple extraction: look for "path":"..." or "path": "..."
+	idx := strings.Index(args, `"path"`)
+	if idx < 0 {
+		return ""
+	}
+	// Find the value after "path":
+	rest := args[idx+6:]
+	colIdx := strings.Index(rest, ":")
+	if colIdx < 0 {
+		return ""
+	}
+	rest = rest[colIdx+1:]
+	rest = strings.TrimSpace(rest)
+	if len(rest) < 3 || rest[0] != '"' {
+		return ""
+	}
+	rest = rest[1:]
+	endIdx := strings.Index(rest, `"`)
+	if endIdx < 0 {
+		return ""
+	}
+	return rest[:endIdx]
+}
+
+// getCachedFileContent retrieves a file from the cache or reads it fresh.
+func getCachedFileContent(cache interface{}, path string) string {
+	// Type-assert to FileStateCache interface if available.
+	type fileReader interface {
+		GetContent(path string) (string, bool)
+	}
+	if fr, ok := cache.(fileReader); ok {
+		if content, found := fr.GetContent(path); found {
+			return content
+		}
+	}
+	return ""
 }
 
 // BuildPrompt assembles a structured summarization prompt from messages.

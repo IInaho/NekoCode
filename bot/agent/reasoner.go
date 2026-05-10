@@ -44,7 +44,9 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 	if a.phaseFn != nil {
 		a.phaseFn(tools.PhaseThinking)
 	}
-	if strings.HasPrefix(state.Input, "/") {
+		// Skip pure slash commands (no arguments), but let commands with
+		// content through — e.g., /kami generate a resume is a skill invocation.
+	if strings.HasPrefix(state.Input, "/") && !strings.Contains(state.Input, " ") {
 		return &ReasoningResult{
 			Thought: "User entered a command", Action: ActionFinish, IsFinal: true,
 		}
@@ -122,7 +124,8 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 
 	firstAttempt := true
 	err := withRetry(a.getCtx(), func() error {
-		a.ctxMgr.MicroCompactIfNeeded()
+		// Proactive auto-compact before every LLM call.
+		a.ctxMgr.AutoCompactIfNeeded(a.ctxMgr.GetAutoCompactConfig(), nil)
 		messages := a.ctxMgr.Build(true)
 		if a.transformContext != nil {
 			messages = a.transformContext(messages)
@@ -179,6 +182,7 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 			}
 			if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
 				a.AddTokens(token.Usage.PromptTokens-estPrompt, token.Usage.CompletionTokens-estCompl)
+				a.ctxMgr.RecordUsage(token.Usage.PromptTokens, token.Usage.CompletionTokens)
 			}
 			if token.FinishReason != "" {
 				finishReason = token.FinishReason
@@ -193,6 +197,14 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 				writeAgentLog("ReasoningContent[%d]: %q", len(token.ReasoningContent), token.ReasoningContent)
 			}
 			if token.ToolCallDelta != nil {
+				// Switch to Reasoning on first tool call (text-less
+				// streams like write-only would otherwise stay stuck).
+				if phaseThink {
+					phaseThink = false
+					if a.phaseFn != nil {
+						a.phaseFn(tools.PhaseReasoning)
+					}
+				}
 				idx := token.ToolCallDelta.Index
 				acc := tcAccum[idx]
 				if acc == nil {
@@ -206,6 +218,9 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 					acc.name = token.ToolCallDelta.Name
 				}
 				acc.args.WriteString(token.ToolCallDelta.Arguments)
+				// Tool call arguments are completion tokens.
+				estCompl++
+				a.AddTokens(0, 1)
 			}
 		}
 
@@ -316,7 +331,7 @@ func (a *Agent) forceSynthesize() string {
 	var text string
 	firstAttempt := true
 	err := withRetry(a.getCtx(), func() error {
-		a.ctxMgr.MicroCompactIfNeeded()
+		a.ctxMgr.AutoCompactIfNeeded(a.ctxMgr.GetAutoCompactConfig(), nil)
 		messages := a.ctxMgr.Build(false)
 		messages = append(messages, llm.Message{
 			Role: "user", Content: a.synthesizePrompt,
@@ -362,6 +377,7 @@ func (a *Agent) forceSynthesize() string {
 			}
 			if token.Usage != nil && (token.Usage.PromptTokens > 0 || token.Usage.CompletionTokens > 0) {
 				a.AddTokens(token.Usage.PromptTokens-estPrompt, token.Usage.CompletionTokens-estCompl)
+				a.ctxMgr.RecordUsage(token.Usage.PromptTokens, token.Usage.CompletionTokens)
 			}
 			if token.FinishReason != "" {
 				finishReason = token.FinishReason

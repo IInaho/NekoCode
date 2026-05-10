@@ -44,8 +44,46 @@ func (t *ReadTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	case ".pdf":
 		return t.readPDF(path)
 	default:
-		return t.readText(path, args)
+		return t.readTextCached(path, args)
 	}
+}
+
+// readTextCached checks the FileStateCache before reading. If the file hasn't
+// changed since last read (same mtime+size) and the requested range is covered,
+// returns a stub instead of re-sending full content.
+func (t *ReadTool) readTextCached(path string, args map[string]interface{}) (string, error) {
+	offset := 1
+	if v, ok := args["offset"].(float64); ok && v > 0 {
+		offset = int(v)
+	}
+	limit := maxReadLines
+	if v, ok := args["limit"].(float64); ok && v > 0 {
+		limit = int(v)
+	}
+
+	if GlobalFileCache != nil {
+		if _, hit := GlobalFileCache.Get(path, offset, limit); hit {
+			return fmt.Sprintf("[File unchanged: %s — content matches previous read at offset=%d limit=%d. Use different offset/limit to re-read.]",
+				filepath.Base(path), offset, limit), nil
+		}
+	}
+
+	result, err := t.readText(path, args)
+	if err != nil {
+		return result, err
+	}
+
+	// Cache non-error results.
+	// isPartial is true when the read didn't cover the entire file from
+	// the beginning, or the file was truncated. Detected via the trailer
+	// readText appends ("\n\n[File has N lines, showing...]"), which is
+	// distinctive enough not to be confused with file content.
+	if GlobalFileCache != nil && !strings.HasPrefix(result, "[Binary") && !strings.HasPrefix(result, "[file is empty") {
+		isPartial := offset > 1 || strings.Contains(result, "\n\n[File has ")
+		GlobalFileCache.Put(path, result, offset, limit, isPartial)
+	}
+
+	return result, nil
 }
 
 func (t *ReadTool) readText(path string, args map[string]interface{}) (string, error) {
