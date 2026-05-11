@@ -1,5 +1,5 @@
-// markdown.go — Markdown 渲染工具。
-package styles
+package message
+
 import (
 	"sync"
 
@@ -48,8 +48,7 @@ func getRenderer(width int) *glamour.TermRenderer {
 	return r
 }
 
-
-func RenderMarkdownWithWidth(content string, width int) string {
+func RenderMarkdown(content string, width int) string {
 	if width <= 0 {
 		width = 80
 	}

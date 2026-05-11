@@ -78,8 +78,14 @@ func FormatForContext(sk *Skill) string {
 	sb.WriteString(fmt.Sprintf("<skill_content name=\"%s\">\n", sk.Name))
 	sb.WriteString(fmt.Sprintf("# Skill: %s\n\n", sk.Name))
 	sb.WriteString(fmt.Sprintf("**This skill is already loaded. Do NOT call the skill tool for %q.**\n\n", sk.Name))
-	sb.WriteString(fmt.Sprintf("**Skill files (templates, references, scripts): `%s`** — Read input files from here using absolute paths. Do NOT glob or search.\n", sk.Dir))
-	sb.WriteString("**Output files go to the current working directory**, NOT the skill directory.\n\n")
+
+	if sk.Dir != "" {
+		sb.WriteString(fmt.Sprintf("**Skill files (templates, references, scripts): `%s`** — Read input files from here using absolute paths. Do NOT glob or search.\n", sk.Dir))
+		sb.WriteString("**Output files go to the current working directory**, NOT the skill directory.\n\n")
+	} else {
+		sb.WriteString("(This is a built-in skill with no file-system directory.)\n\n")
+	}
+
 	sb.WriteString(sk.Content)
 
 	if len(sk.Files) > 0 {

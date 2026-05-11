@@ -10,7 +10,6 @@ import (
 )
 
 // frontmatter is the YAML header of a SKILL.md file.
-// Field names follow the Claude Code convention, which is the de facto standard.
 type frontmatter struct {
 	Name                   string   `yaml:"name"`
 	Description            string   `yaml:"description"`
@@ -26,23 +25,22 @@ type frontmatter struct {
 	ArgumentHint           string   `yaml:"argument-hint"`
 }
 
-// loadSkill parses a SKILL.md file and returns a Skill.
+// LoadFromContent parses raw SKILL.md content into a Skill.
+// Used for bundled/embedded skills that have no file-system directory.
+func LoadFromContent(content string) (*Skill, error) {
+	return parseSkillContent(content)
+}
+
+// loadSkill parses a SKILL.md file and returns a Skill with its file listing.
 func loadSkill(path string) (*Skill, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)
 	}
 
-	fm, body, err := parseFrontmatter(string(data))
+	sk, err := parseSkillContent(string(data))
 	if err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
-	}
-
-	if fm.Name == "" {
-		return nil, fmt.Errorf("missing required field: name")
-	}
-	if fm.Description == "" {
-		return nil, fmt.Errorf("missing required field: description")
+		return nil, err
 	}
 
 	dir := filepath.Dir(path)
@@ -68,19 +66,35 @@ func loadSkill(path string) (*Skill, error) {
 		case ".gitignore", "README.md", "LICENSE":
 			return nil
 		}
-		// Map back to user-facing prefix so model sees clean paths.
 		userPath := strings.Replace(p, walkRoot, dir, 1)
 		files = append(files, userPath)
 		return nil
 	})
+
+	sk.Dir = dir
+	sk.Files = files
+	return sk, nil
+}
+
+// parseSkillContent parses raw markdown content into a Skill.
+func parseSkillContent(content string) (*Skill, error) {
+	fm, body, err := parseFrontmatter(content)
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+
+	if fm.Name == "" {
+		return nil, fmt.Errorf("missing required field: name")
+	}
+	if fm.Description == "" {
+		return nil, fmt.Errorf("missing required field: description")
+	}
 
 	return &Skill{
 		Name:                   fm.Name,
 		Description:            fm.Description,
 		WhenToUse:              fm.WhenToUse,
 		Content:                strings.TrimSpace(body),
-		Dir:                    dir,
-		Files:                  files,
 		Context:                fm.Context,
 		AgentType:              fm.Agent,
 		AllowedTools:           fm.AllowedTools,

@@ -1,32 +1,30 @@
 // tool_snip.go — Snip tool: lets the model proactively remove old messages.
-package tools
+package builtin
 
 import (
 	"context"
 	"fmt"
+	"nekocode/bot/tools"
 )
 
-// SnipFunc is called when the model invokes snip to remove a message range.
-type SnipFunc func(startIdx, endIdx int) string
-
 type SnipTool struct {
-	snipFn SnipFunc
+	snipFn tools.SnipFunc
 }
 
 func NewSnipTool() *SnipTool { return &SnipTool{} }
 
-func (t *SnipTool) Wire(fn SnipFunc) { t.snipFn = fn }
+func (t *SnipTool) Wire(fn tools.SnipFunc) { t.snipFn = fn }
 
 func (t *SnipTool) Name() string                                       { return "snip" }
-func (t *SnipTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
-func (t *SnipTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelDestructive }
+func (t *SnipTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeSequential }
+func (t *SnipTool) DangerLevel(map[string]interface{}) tools.DangerLevel     { return tools.LevelDestructive }
 
 func (t *SnipTool) Description() string {
 	return "Remove old messages no longer needed to save context. Only use for completed conversation segments with no further reference value. Irreversible."
 }
 
-func (t *SnipTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *SnipTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "start_index", Type: "number", Required: true, Description: "First message index to remove (inclusive)"},
 		{Name: "end_index", Type: "number", Required: true, Description: "Last message index to remove (inclusive)"},
 	}

@@ -19,6 +19,8 @@ const (
 	ActionFinish
 )
 
+const maxTokensCeiling = 64000 // max_tokens limit for finish_reason=length escalation
+
 type ToolCallItem struct {
 	ID   string
 	Name string
@@ -123,6 +125,8 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 	var textContent string
 
 	firstAttempt := true
+	savedMaxTokens := a.llmClient.MaxTokens()
+	thinkingDisabled := false
 	err := withRetry(a.getCtx(), func() error {
 		// Proactive auto-compact before every LLM call.
 		a.ctxMgr.AutoCompactIfNeeded(a.ctxMgr.GetAutoCompactConfig(), nil)
@@ -225,20 +229,21 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		}
 
 		// Two-tier escalation for finish_reason=length:
-		//   Tier 1: double max_tokens to 64000 and retry.
-		//   Tier 2: if already at 64000, disable thinking to stop
+		//   Tier 1: double max_tokens to maxTokensCeiling and retry.
+		//   Tier 2: if already at maxTokensCeiling, disable thinking to stop
 		//            reasoning from eating the output budget.
 		//   After both tiers exhausted, return partial text + error
 		//   so callers can surface a non-garbled summary to the user.
 		if finishReason == "length" && len(tcAccum) == 0 {
-			if a.llmClient.MaxTokens() < 64000 {
-				writeAgentLog("callLLM: finish_reason=length, escalating max_tokens %d→64000", a.llmClient.MaxTokens())
-				a.llmClient.SetMaxTokens(64000)
+			if a.llmClient.MaxTokens() < maxTokensCeiling {
+				writeAgentLog("callLLM: finish_reason=length, escalating max_tokens %d→%d", a.llmClient.MaxTokens(), maxTokensCeiling)
+				a.llmClient.SetMaxTokens(maxTokensCeiling)
 				return fmt.Errorf("output token limit hit, retrying with higher limit")
 			}
-			writeAgentLog("callLLM: finish_reason=length at max_tokens=64000, disabling thinking")
+			writeAgentLog("callLLM: finish_reason=length at max_tokens=%d, disabling thinking", maxTokensCeiling)
 			a.llmClient.SetDisableThinking(true)
-			return fmt.Errorf("output limit still hit at 64000, retrying with thinking disabled")
+			thinkingDisabled = true
+			return fmt.Errorf("output limit still hit at %d, retrying with thinking disabled", maxTokensCeiling)
 		}
 
 		// If the stream ended with length and we exhausted all retries,
@@ -296,6 +301,11 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		a.ctxMgr.AddAssistantToolCall(textContent, a.lastReasoningContent, toolCalls)
 		return nil
 	})
+	// Restore original state — escalations are per-call tactics, not permanent.
+	a.llmClient.SetMaxTokens(savedMaxTokens)
+	if thinkingDisabled {
+		a.llmClient.SetDisableThinking(false)
+	}
 	if err != nil {
 		return nil, textContent, err
 	}
@@ -330,6 +340,8 @@ type toolAccum struct {
 func (a *Agent) forceSynthesize() string {
 	var text string
 	firstAttempt := true
+	savedMaxTokens := a.llmClient.MaxTokens()
+	thinkingDisabled := false
 	err := withRetry(a.getCtx(), func() error {
 		a.ctxMgr.AutoCompactIfNeeded(a.ctxMgr.GetAutoCompactConfig(), nil)
 		messages := a.ctxMgr.Build(false)
@@ -386,14 +398,15 @@ func (a *Agent) forceSynthesize() string {
 
 		// Same two-tier escalation as callLLMForTool.
 		if finishReason == "length" {
-			if a.llmClient.MaxTokens() < 64000 {
-				writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens %d→64000", a.llmClient.MaxTokens())
-				a.llmClient.SetMaxTokens(64000)
+			if a.llmClient.MaxTokens() < maxTokensCeiling {
+				writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens %d→%d", a.llmClient.MaxTokens(), maxTokensCeiling)
+				a.llmClient.SetMaxTokens(maxTokensCeiling)
 				return fmt.Errorf("output token limit hit, retrying with higher limit")
 			}
-			writeAgentLog("forceSynthesize: finish_reason=length at max_tokens=64000, disabling thinking")
+			writeAgentLog("forceSynthesize: finish_reason=length at max_tokens=%d, disabling thinking", maxTokensCeiling)
 			a.llmClient.SetDisableThinking(true)
-			return fmt.Errorf("output limit still hit at 64000, retrying with thinking disabled")
+			thinkingDisabled = true
+			return fmt.Errorf("output limit still hit at %d, retrying with thinking disabled", maxTokensCeiling)
 		}
 
 		select {
@@ -406,6 +419,11 @@ func (a *Agent) forceSynthesize() string {
 		text = tools.StripAnsi(textBuf.String())
 		return nil
 	})
+	// Restore original state — escalations are per-call tactics, not permanent.
+	a.llmClient.SetMaxTokens(savedMaxTokens)
+	if thinkingDisabled {
+		a.llmClient.SetDisableThinking(false)
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return "Interrupted"

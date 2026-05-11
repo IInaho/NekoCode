@@ -27,7 +27,7 @@ func (m *UserMessageItem) Render(width int) string {
 	}
 	contentW := cw - barOverhead
 	header := m.sty.Yellow.Bold(true).Render("You")
-	body := strings.TrimSpace(styles.RenderMarkdownWithWidth(strings.TrimSpace(m.content), contentW))
+	body := strings.TrimSpace(RenderMarkdown(strings.TrimSpace(m.content), contentW))
 	parts := []string{header, "", body}
 	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	out := thickLeftBar(stripLeadingSpaces(strings.TrimSpace(joined)), lipgloss.Color("#c9a96e"), cw)

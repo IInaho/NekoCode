@@ -1,5 +1,5 @@
 // Package skill provides a file-based skill system for NekoCode.
-// Skills follow the Claude Code SKILL.md convention — a directory containing
+// Skills follow the SKILL.md convention — a directory containing
 // a SKILL.md file with YAML frontmatter and Markdown body.
 // Skills are discovered at startup from project and user directories,
 // then made available to the model via the skill tool and slash commands.
@@ -41,6 +41,21 @@ func NewRegistry() *Registry {
 	return &Registry{
 		skills: make(map[string]*Skill),
 		loaded: make(map[string]bool),
+	}
+}
+
+// RegisterBundled registers pre-built skills compiled into the binary.
+// Bundled skills take priority over file-based skills of the same name.
+func (r *Registry) RegisterBundled(skills []*Skill) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, sk := range skills {
+		if _, exists := r.skills[sk.Name]; !exists {
+			r.skills[sk.Name] = sk
+		}
+	}
+	if len(skills) > 0 {
+		log.Printf("skill: registered %d bundled skills", len(skills))
 	}
 }
 
@@ -92,6 +107,14 @@ func (r *Registry) MarkLoaded(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.loaded[name] = true
+}
+
+// ClearLoaded clears all loaded-skill markers. Called on FreshStart so skills
+// become visible again in a new conversation.
+func (r *Registry) ClearLoaded() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.loaded = make(map[string]bool)
 }
 
 // IsLoaded returns whether a skill is currently active in context.

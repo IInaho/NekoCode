@@ -6,6 +6,7 @@ func (m *Manager) Add(role, content string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages = append(m.messages, llm.Message{Role: role, Content: content})
+	m.tokenTracker.AddNew(len(role) + len(content))
 
 	// Auto-extract critical constraints from user messages.
 	if role == "user" && m.anchor != nil {
@@ -23,6 +24,7 @@ func (m *Manager) AddAssistantResponse(content, reasoning string) {
 		Content:          content,
 		ReasoningContent: reasoning,
 	})
+	m.tokenTracker.AddNew(len("assistant") + len(content) + len(reasoning))
 }
 
 func (m *Manager) AddAssistantToolCall(content, reasoning string, toolCalls []llm.ToolCall) {
@@ -34,6 +36,7 @@ func (m *Manager) AddAssistantToolCall(content, reasoning string, toolCalls []ll
 		ReasoningContent: reasoning,
 		ToolCalls:        toolCalls,
 	})
+	m.tokenTracker.AddNew(len("assistant") + len(content) + len(reasoning))
 }
 
 func (m *Manager) AddToolResult(toolCallID, content string) {
@@ -48,6 +51,7 @@ func (m *Manager) AddToolResult(toolCallID, content string) {
 		Content:    content,
 		ToolCallID: toolCallID,
 	})
+	m.tokenTracker.AddNew(len(role) + len(content) + len(toolCallID))
 }
 
 func (m *Manager) AddToolResultsBatch(results []llm.Message) {
@@ -63,6 +67,7 @@ func (m *Manager) AddToolResultsBatch(results []llm.Message) {
 			Content:    r.Content,
 			ToolCallID: r.ToolCallID,
 		})
+		m.tokenTracker.AddNew(len(role) + len(r.Content) + len(r.ToolCallID))
 	}
 }
 

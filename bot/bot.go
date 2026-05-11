@@ -11,22 +11,30 @@ import (
 	_ "embed"
 	"nekocode/bot/agent"
 	"nekocode/bot/agent/subagent"
+	"nekocode/bot/command"
+	"nekocode/bot/config"
 	bctx "nekocode/bot/context"
 	"nekocode/bot/ctxmgr"
 	"nekocode/bot/session"
 	"nekocode/bot/skill"
+	"nekocode/bot/skill/bundled"
 	"nekocode/bot/tools"
+	"nekocode/bot/tools/builtin"
 	"nekocode/llm"
 )
 
 type Bot struct {
-	cfg       *Config
-	ctxMgr    *ctxmgr.Manager
-	cmdParser *Parser
-	ag        *agent.Agent
-	sessMem   *session.Memory
-	extractor *session.Extractor
-	skillReg  *skill.Registry
+	cfg        *config.Config
+	ctxMgr     *ctxmgr.Manager
+	cmdParser  *command.Parser
+	ag         *agent.Agent
+	sessMem    *session.Memory
+	extractor  *session.Extractor
+	skillReg      *skill.Registry
+	skillHint     string // skill activation hint for the TUI
+	wantsAgent    bool   // true if the last command should continue to agent
+	skillMsgStart int    // index of first skill message in ctxMgr, -1 if none
+	skillMsgEnd   int    // index after last skill message
 }
 
 //go:embed prompt/system.md
@@ -35,7 +43,7 @@ var SystemPrompt string
 func New() *Bot {
 	ctx := context.Background()
 
-	cfg, _ := LoadConfig()
+	cfg, _ := config.Load()
 
 	systemPrompt := SystemPrompt
 
@@ -87,25 +95,28 @@ func New() *Bot {
 	})
 
 	toolRegistry := tools.NewRegistry()
-	tools.RegisterDefaults(toolRegistry)
+	builtin.RegisterAll(toolRegistry)
 
 	// Init global file state cache for read dedup (Phase 2).
 	tools.GlobalFileCache = tools.NewFileStateCache()
 
-	// Skill system: discover, load, and register the skill tool.
+	// Skill system: bundled first (take priority), then file-based.
 	skillReg := skill.NewRegistry()
+	skillReg.RegisterBundled(bundled.All())
 	if err := skillReg.Load(skill.DefaultDirs()); err != nil {
 		fmt.Fprintf(os.Stderr, "skill: load error: %v\n", err)
 	}
 	toolRegistry.Register(skill.NewSkillTool(skillReg))
-	ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), nil, 64000))
+	ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), nil, cfg.TokenBudget))
 
-	cmdParser := NewParser()
+	cmdParser := command.NewParser()
 
 	sessID := fmt.Sprintf("session-%d", time.Now().Unix())
 	sessMem, err := session.New(sessID, "")
 	if err != nil {
-		sessMem, _ = session.New("default", "") // fallback to /tmp-based default
+		if sessMem, err = session.New("default", ""); err != nil {
+			fmt.Fprintf(os.Stderr, "session memory: %v — running without session persistence\n", err)
+		}
 	}
 	sessExt := session.NewExtractor(llmClient)
 
@@ -117,6 +128,7 @@ func New() *Bot {
 		sessMem:   sessMem,
 		extractor: sessExt,
 		skillReg:  skillReg,
+		skillMsgStart: -1,
 	}
 
 	// Sub-agent engine uses a separate LLM client with thinking disabled.
@@ -129,7 +141,7 @@ func New() *Bot {
 		names = append(names, a.Name)
 	}
 	if t, err := toolRegistry.Get("task"); err == nil {
-		t.(*tools.TaskTool).Wire(func(ctx context.Context, prompt, agentType string) (string, error) {
+		t.(*builtin.TaskTool).Wire(func(ctx context.Context, prompt, agentType string) (string, error) {
 			at, ok := subagent.Get(agentType)
 			if !ok {
 				return "", fmt.Errorf("unknown sub-agent type: %s (available: %s)", agentType, strings.Join(names, ", "))
@@ -172,35 +184,40 @@ func New() *Bot {
 		return msgs
 	})
 
-	callbacks := &CommandCallbacks{
+	callbacks := &command.Callbacks{
 		ClearHistory:   ctxMgr.Clear,
 		GetConfig:      func() string { return fmt.Sprintf("%s/%s", cfg.Provider, cfg.Model) },
 		ForceSummarize: func() (string, error) { return b.ForceSummarize() },
 		ContextStats:   func() string { return b.ContextStats() },
 		FreshStart:     func() (string, error) { return b.ForceFreshStart() },
 	}
-	RegisterDefaultCommands(b.cmdParser, callbacks)
+	command.RegisterDefaults(b.cmdParser, callbacks)
 
 	// Register each skill as a slash command (/skill-name).
 	for _, sk := range skillReg.List() {
 		name := sk.Name
-		b.cmdParser.Register(name, func(cmd *Command) (string, bool) {
+		b.cmdParser.Register(name, func(cmd *command.Command) (string, bool) {
 			sk, ok := skillReg.Get(name)
 			if !ok {
 				return fmt.Sprintf("Skill %q not found.", name), true
 			}
+			// Track skill message range so we can snip them when
+			// the next turn doesn't need this skill.
+			b.skillMsgStart = ctxMgr.Len()
 			ctxMgr.Add("user", skill.FormatForContext(sk))
 			skillReg.MarkLoaded(name)
-			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), 64000))
+			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), cfg.TokenBudget))
 
-			// No arguments: just load the skill and confirm.
 			if len(cmd.Args) == 0 {
+				b.skillMsgStart = -1
 				return fmt.Sprintf("Loaded skill %q. Type your request to use it.", name), true
 			}
 
-			// Has arguments: inject clean prompt (strip /cmd prefix) and start agent.
-			prompt := strings.Join(cmd.Args, " ")
-			ctxMgr.Add("user", prompt)
+			// Has arguments: inject clean prompt, set skill hint, start agent.
+			ctxMgr.Add("user", strings.Join(cmd.Args, " "))
+			b.skillMsgEnd = ctxMgr.Len()
+			b.skillHint = name
+			b.wantsAgent = true
 			return "", false
 		})
 	}
@@ -209,7 +226,7 @@ func New() *Bot {
 	if t, err := toolRegistry.Get("skill"); err == nil {
 		t.(*skill.SkillTool).SetOnLoad(func(name string) {
 			skillReg.MarkLoaded(name)
-			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), 64000))
+			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), cfg.TokenBudget))
 		})
 	}
 
@@ -225,11 +242,35 @@ func (b *Bot) Provider() string { return b.cfg.Provider }
 func (b *Bot) Model() string    { return b.cfg.Model }
 
 func (b *Bot) ExecuteCommand(input string) (string, bool) {
+	b.wantsAgent = false
 	cmd := b.cmdParser.Parse(input)
 	if cmd.Name == "" {
+		// Plain text: clear skill context from previous turn.
+		b.clearSkillContext()
 		return "", false
 	}
 	return b.cmdParser.Execute(cmd)
+}
+
+// clearSkillContext removes skill messages from the previous turn so they
+// don't consume context tokens when the current turn doesn't need the skill.
+func (b *Bot) clearSkillContext() {
+	if b.skillMsgStart < 0 || b.skillMsgEnd <= b.skillMsgStart {
+		return
+	}
+	b.ctxMgr.Snip(b.skillMsgStart, b.skillMsgEnd-1)
+	b.skillMsgStart = -1
+	b.skillMsgEnd = 0
+}
+
+// SkillHint returns the skill activation hint and whether the agent should
+// continue running. Call after ExecuteCommand.
+func (b *Bot) SkillHint() (string, bool) {
+	hint := b.skillHint
+	cont := b.wantsAgent
+	b.skillHint = ""
+	b.wantsAgent = false
+	return hint, cont
 }
 
 func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, toolName, toolArgs, output string, batchIdx, batchTotal int)) (string, error) {
@@ -242,18 +283,20 @@ func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, tool
 	b.SummarizeIfNeeded()
 
 	// Update goal from session memory after each turn.
-	if anchor := b.ctxMgr.Anchor(); anchor != nil {
-		if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() {
-			anchor.ExtractGoalFromSessionMemory(content)
+	if b.sessMem != nil {
+		if anchor := b.ctxMgr.Anchor(); anchor != nil {
+			if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() {
+				anchor.ExtractGoalFromSessionMemory(content)
+			}
 		}
-	}
 
-	// Trigger async session memory extraction if thresholds are met.
-	_, tokens, _ := b.ctxMgr.Stats()
-	toolCount := b.ctxMgr.ToolResultCount()
-	hasToolCall := b.ctxMgr.LastAssistantHasToolCall()
-	if b.sessMem.ShouldExtract(tokens, toolCount, hasToolCall, session.DefaultExtractConfig) {
-		b.extractor.RunAsync(b.sessMem, b.ctxMgr, nil)
+		// Trigger async session memory extraction if thresholds are met.
+		_, tokens, _ := b.ctxMgr.Stats()
+		toolCount := b.ctxMgr.ToolResultCount()
+		hasToolCall := b.ctxMgr.LastAssistantHasToolCall()
+		if b.sessMem.ShouldExtract(tokens, toolCount, hasToolCall, session.DefaultExtractConfig) {
+			b.extractor.RunAsync(b.sessMem, b.ctxMgr, nil)
+		}
 	}
 
 	return result.FinalOutput, result.Error
@@ -295,9 +338,11 @@ func (b *Bot) SummarizeIfNeeded() {
 	}
 
 	// Try session memory first (free, no API call).
-	if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() && len(content) > 100 {
-		_ = b.ctxMgr.SummarizeWithSessionMemory(content)
-		return
+	if b.sessMem != nil {
+		if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() && len(content) > 100 {
+			_ = b.ctxMgr.SummarizeWithSessionMemory(content)
+			return
+		}
 	}
 
 	// Fall back to LLM summarizer.
@@ -309,10 +354,16 @@ func (b *Bot) ForceSummarize() (string, error) {
 	if count <= 2 {
 		return "Conversation too short, nothing to compact.", nil
 	}
+	if !b.ctxMgr.NeedsSummarization() {
+		return fmt.Sprintf("Not needed: %d messages, ~%d tokens — well under budget", count, tokens), nil
+	}
 	if err := b.ctxMgr.Summarize(); err != nil {
 		return "", err
 	}
 	_, newTokens, _ := b.ctxMgr.Stats()
+	if newTokens >= tokens {
+		return fmt.Sprintf("Already compact: %d messages, ~%d tokens — nothing to compress", count, tokens), nil
+	}
 	action := "Compacted"
 	if hadSummary {
 		action = "Summary updated"
@@ -358,21 +409,39 @@ func (b *Bot) CommandNames() []string {
 
 // ForceFreshStart summarizes the current conversation (if enough content) then
 // clears all messages, keeping the summary for future context.
-// Uses session memory content as summary if available (free), otherwise calls the
-// configured summarizer.
+// Creates a new session memory file so old context doesn't leak.
 func (b *Bot) ForceFreshStart() (string, error) {
 	count, oldTokens, _ := b.ctxMgr.Stats()
-	if count <= 2 {
-		b.ctxMgr.FreshStart()
-		return "New conversation started.", nil
+	b.skillReg.ClearLoaded()
+	b.ctxMgr.SetSkillList(skill.BuildSkillListText(b.skillReg.List(), nil, b.cfg.TokenBudget))
+
+	// Snapshot old session content before creating a new one.
+	oldSessContent := ""
+	oldSessHadSubstance := false
+	if b.sessMem != nil {
+		oldSessContent = b.sessMem.ReadContent()
+		oldSessHadSubstance = b.sessMem.HasSubstance()
 	}
 
-	// Try session memory first (free, no API call).
-	if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() {
-		b.ctxMgr.SetSummary(content)
+	// Create a new session memory file for the new conversation.
+	newSessID := fmt.Sprintf("session-%d", time.Now().Unix())
+	newSess, err := session.New(newSessID, "")
+	if err != nil {
+		newSess = nil
+	}
+	b.sessMem = newSess
+
+	if count <= 2 {
+		b.ctxMgr.FreshStart()
+		return fmt.Sprintf("New session %s started.", newSessID), nil
+	}
+
+	// Use old session memory as summary if available (free, no API call).
+	if oldSessHadSubstance && oldSessContent != "" {
+		b.ctxMgr.SetSummary(oldSessContent)
 		b.ctxMgr.FreshStart()
 		_, newTokens, _ := b.ctxMgr.Stats()
-		return fmt.Sprintf("New conversation. %d messages, ~%d tokens → session memory (~%d tokens)", count, oldTokens, newTokens), nil
+		return fmt.Sprintf("New session %s. %d messages, ~%d tokens → session memory (~%d tokens)", newSessID, count, oldTokens, newTokens), nil
 	}
 
 	// Fall back to API summarizer.
@@ -387,11 +456,11 @@ func (b *Bot) ForceFreshStart() (string, error) {
 	if hasSummary {
 		detail = "with summary"
 	}
-	return fmt.Sprintf("New conversation. %d messages, ~%d tokens → %s (~%d tokens)", count, oldTokens, detail, newTokens), nil
+	return fmt.Sprintf("New session %s. %d messages, ~%d tokens → %s (~%d tokens)", newSessID, count, oldTokens, detail, newTokens), nil
 }
 
 // cloneLLM creates a copy of the LLM client with the same provider/model config.
-func cloneLLM(client llm.LLM, cfg *Config) llm.LLM {
+func cloneLLM(client llm.LLM, cfg *config.Config) llm.LLM {
 	switch cfg.Provider {
 	case "anthropic":
 		c := llm.NewAnthropic(cfg.APIKey, cfg.Model)

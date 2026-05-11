@@ -1,4 +1,4 @@
-package tools
+package builtin
 
 import (
 	"context"
@@ -6,50 +6,41 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"nekocode/bot/tools"
 )
-
-// TodoItem represents a single task in the agent's todo list.
-type TodoItem struct {
-	Content string `json:"content"`
-	Status  string `json:"status"` // "pending", "in_progress", "completed"
-}
-
-// TodoFunc is called whenever the todo list is updated.
-type TodoFunc func(items []TodoItem)
 
 type TodoWriteTool struct {
 	mu       sync.Mutex
-	onUpdate TodoFunc
-	items    []TodoItem
+	onUpdate tools.TodoFunc
+	items    []tools.TodoItem
 }
 
 func NewTodoWriteTool() *TodoWriteTool {
 	return &TodoWriteTool{}
 }
 
-// SetUpdateFn wires the TUI callback. Thread-safe, can be called after registration.
-func (t *TodoWriteTool) SetUpdateFn(fn TodoFunc) {
+func (t *TodoWriteTool) SetUpdateFn(fn tools.TodoFunc) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.onUpdate = fn
 }
 
-func (t *TodoWriteTool) Name() string                                       { return "todo_write" }
-func (t *TodoWriteTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
-func (t *TodoWriteTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
+func (t *TodoWriteTool) Name() string                                            { return "todo_write" }
+func (t *TodoWriteTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeSequential }
+func (t *TodoWriteTool) DangerLevel(map[string]interface{}) tools.DangerLevel     { return tools.LevelSafe }
 func (t *TodoWriteTool) Description() string {
 	return "Update the task list (record only, not for planning). Each call fully replaces the list. Write the complete list in one call — never append. Format: [{\"content\":\"...\",\"status\":\"pending|in_progress|completed\"}]"
 }
 
-func (t *TodoWriteTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *TodoWriteTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "todos", Type: "string", Required: true, Description: "JSON task list: [{\"content\":\"...\",\"status\":\"pending|in_progress|completed\"}]"},
 	}
 }
 
 func (t *TodoWriteTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Accept both JSON string and native array (LLM function calling may pass either).
-	var items []TodoItem
+	var items []tools.TodoItem
 	switch v := args["todos"].(type) {
 	case string:
 		if v == "" {
@@ -76,7 +67,6 @@ func (t *TodoWriteTool) Execute(ctx context.Context, args map[string]interface{}
 		fn(items)
 	}
 
-	// Format a human-readable summary for the agent's context.
 	var b strings.Builder
 	fmt.Fprintf(&b, "Task list updated (%d items):\n", len(items))
 	for i, it := range items {

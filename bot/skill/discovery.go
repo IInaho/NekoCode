@@ -8,7 +8,7 @@ import (
 )
 
 // discoverSkills scans the given directories for skill definition files.
-// Recognizes both skill.md (NekoCode convention) and SKILL.md (Claude Code convention).
+// Recognizes both skill.md and SKILL.md.
 // Returns absolute paths sorted so project dirs (scanned first) take priority.
 func discoverSkills(dirs []string) []string {
 	var paths []string

@@ -1,23 +1,24 @@
-package tools
+package builtin
 
 import (
 	"context"
 	"fmt"
 	"os"
 	"strings"
+	"nekocode/bot/tools"
 )
 
 type ListTool struct{}
 
 func (t *ListTool) Name() string                                       { return "list" }
-func (t *ListTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *ListTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
+func (t *ListTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeParallel }
+func (t *ListTool) DangerLevel(map[string]interface{}) tools.DangerLevel     { return tools.LevelSafe }
 func (t *ListTool) Description() string {
 	return "List directory contents. ALWAYS use List — NEVER invoke ls as Bash. Returns files and subdirectories sorted by name."
 }
 
-func (t *ListTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *ListTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "path", Type: "string", Required: true, Description: "Directory path to list"},
 	}
 }

@@ -1,6 +1,6 @@
 // auto_compact.go — proactive context overflow detection and tiered compression.
 // Called before every LLM call to prevent prompt_too_long errors.
-// Uses 5 warning levels and a circuit breaker (inspired by Claude Code).
+// Uses 5 warning levels and a circuit breaker.
 
 package ctxmgr
 
@@ -65,7 +65,12 @@ type AutoCompact struct {
 // Returns the action taken and any error.
 func (m *Manager) AutoCompactIfNeeded(cfg AutoCompactConfig, sessionMemoryProvider func() string) (CompactLevel, error) {
 	m.mu.RLock()
-	estTokens := m.estimatedTokens()
+	estTokens := m.visibleEstimatedTokens()
+	// Prefer API-calibrated token counts over pure heuristics
+	// to avoid underestimating context pressure.
+	if t := m.tokenTracker.Total(); t > estTokens {
+		estTokens = t
+	}
 	effectiveBudget := m.tokenBudget
 	m.mu.RUnlock()
 

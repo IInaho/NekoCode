@@ -25,7 +25,20 @@ func logPanic(r any) {
 func (m *Model) startChat(value string) tea.Cmd {
 	resp, ok := m.Bot.ExecuteCommand(value)
 	if ok && resp != "" {
-		m.Messages.AddMessage(message.ChatMessage{Role: "system", Content: resp})
+		// Command output is plain text — bypass markdown rendering
+		// to avoid HTML tag stripping and paragraph spacing.
+		m.Messages.AddMessage(message.ChatMessage{
+			Role: "system", Title: value, Content: resp, RenderedContent: resp,
+		})
+	}
+	// Skill indicator: show only when the current turn activated a skill.
+	if hint, wantsAgent := m.Bot.SkillHint(); wantsAgent {
+		m.activeSkill = hint
+		return m.startAgent(value)
+	}
+	// Clear from previous turn — only the activating turn shows the indicator.
+	m.activeSkill = ""
+	if ok && resp != "" {
 		return nil
 	}
 	return m.startAgent(value)
@@ -36,6 +49,11 @@ func (m *Model) startAgent(value string) tea.Cmd {
 	m.Messages.GotoBottom()
 	m.Input.SetFollow(true)
 	m.transitionTo(stateProcessing)
+
+	// Show active skill for this turn in the status bar.
+	if m.activeSkill != "" {
+		m.Messages.SetSkill(m.activeSkill)
+	}
 
 	m.Bot.SetStreamFn(func(delta string) { m.Messages.ProcessStreamText(delta) })
 	m.Bot.SetReasoningStreamFn(func(delta string) { m.Messages.ProcessReasoningText(delta) })
@@ -115,3 +133,4 @@ func tokensSummary(b BotInterface) string {
 	p, c := b.TokenUsage()
 	return "↑" + styles.FmtTokens(p) + " ↓" + styles.FmtTokens(c)
 }
+

@@ -1,5 +1,4 @@
-// commands.go — 斜杠命令系统。
-package bot
+package command
 
 import (
 	"strings"
@@ -11,17 +10,17 @@ type Command struct {
 	Raw  string
 }
 
-type CommandHandler func(cmd *Command) (string, bool)
+type Handler func(cmd *Command) (string, bool)
 
 type Parser struct {
-	handlers map[string]CommandHandler
+	handlers map[string]Handler
 }
 
 func NewParser() *Parser {
-	return &Parser{handlers: make(map[string]CommandHandler)}
+	return &Parser{handlers: make(map[string]Handler)}
 }
 
-func (p *Parser) Register(name string, handler CommandHandler) {
+func (p *Parser) Register(name string, handler Handler) {
 	p.handlers[name] = handler
 }
 
@@ -61,7 +60,7 @@ func (p *Parser) Execute(cmd *Command) (string, bool) {
 	return handler(cmd)
 }
 
-type CommandCallbacks struct {
+type Callbacks struct {
 	ClearHistory   func()
 	GetConfig      func() string
 	ForceSummarize func() (string, error)
@@ -69,7 +68,7 @@ type CommandCallbacks struct {
 	FreshStart     func() (string, error)
 }
 
-func RegisterDefaultCommands(p *Parser, callbacks *CommandCallbacks) {
+func RegisterDefaults(p *Parser, callbacks *Callbacks) {
 	p.Register("help", func(cmd *Command) (string, bool) {
 		return `Available commands:
   /help        Show this help message
@@ -78,7 +77,7 @@ func RegisterDefaultCommands(p *Parser, callbacks *CommandCallbacks) {
   /stats       Show context stats (messages, tokens, summary)
   /summarize   Force context compression now
   /config      Show current provider and model
-  /<skill>     Load a skill's workflow (see Available Skills in context)
+  /skill       Load a skill's workflow (see Available Skills in context)
 `, true
 	})
 

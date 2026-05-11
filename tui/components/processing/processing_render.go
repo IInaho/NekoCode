@@ -55,6 +55,10 @@ func (p *ProcessingItem) renderHeader() string {
 	if l == "" {
 		l = "Thinking"
 	}
+	sk := ""
+	if p.skill != "" {
+		sk = " " + p.sty.Yellow.Render("skill:"+p.skill)
+	}
 	tp := ""
 	if p.tokenPrompt > 0 || p.tokenCompl > 0 {
 		tp = "  " + p.sty.Subtle.Render("↑"+styles.FmtTokens(p.tokenPrompt)) + " " + p.sty.Teal.Render("↓"+styles.FmtTokens(p.tokenCompl))
@@ -62,7 +66,7 @@ func (p *ProcessingItem) renderHeader() string {
 	if p.compactCount > 0 {
 		tp += "  " + p.sty.Subtle.Render(fmt.Sprintf("🧹%d", p.compactCount))
 	}
-	return p.sty.Teal.Render(s) + " " + p.sty.Subtle.Render(l) + tp
+	return p.sty.Teal.Render(s) + " " + p.sty.Subtle.Render(l) + sk + tp
 }
 
 func (p *ProcessingItem) renderTodos(cw int) string {

@@ -137,7 +137,7 @@
 - ARCHITECTURE.md / DESIGN.md / PLAN.md 反映当前项目状态
 
 ### 28. 幻觉防治体系 ✅
-基于 Claude Code / OpenCode 调研实施的 14 项防幻觉改造：
+基于主流方案调研实施的 14 项防幻觉改造：
 - System Prompt 增强（禁止生成 URL、忠实报告、Prompt Injection 检测、当前状态权威）+ 日期注入
 - 末日循环检测（3 次相同调用 → forceSynthesize）
 - 工具输出预算截断（2000行/50KB）
@@ -164,7 +164,7 @@
 
 ### 29. Skill 系统 ✅
 - YAML 定义技能工作流（Ref / Prompt / Tool / Invoke 步骤类型）
-- `.claude/skills/` 目录自动发现
+- `.nekocode/skills/` 目录自动发现
 - 工作流注入 system prompt
 - `/<skill-name>` 斜杠命令触发
 - `/skill` 工具供 Agent 调用
@@ -195,29 +195,55 @@
 - @include 递归引用（最大深度 3）
 - 40K 字符预算
 
+### 36. 子包拆分：config + command ✅
+- `bot/config.go` → `bot/config/config.go`：独立 config 子包
+- `bot/commands.go` → `bot/command/parser.go`：独立 command 子包，Callbacks 模式解耦
+- `RegisterDefaults()` 集中注册 help/clear/stats/summarize/new/config 命令
+
+### 37. 工具实现重组：tools/builtin ✅
+- 工具实现从 `bot/tools/tool_*.go` 移入 `bot/tools/builtin/tool_*.go`
+- 新增 `bot/tools/builtin/register.go`：`RegisterAll()` 统一注册全部 12 个内置工具
+- `bot/tools/` 保留核心抽象（接口、Registry、Executor、Phase、Confirm 等）
+
+### 38. TUI handlers 合并 ✅
+- `tui/handlers_spin.go` + `tui/handlers_done.go` + `tui/handlers_keys.go` → `tui/handlers.go`
+- `tui/phase.go` 删除，Phase 常量移入 `tui/model.go`
+
+### 39. Markdown 渲染移动 ✅
+- `tui/styles/markdown.go` → `tui/components/message/markdown.go`
+- 按宽度缓存的 glamour renderer，Warmup() 预创建 40-160 字符宽度的渲染器
+
+### 40. Bundled Skills ✅
+- 新增 `bot/skill/bundled/` 子包
+- `go:embed` 加载 `bundled/meta/SKILL.md`，编译进二进制
+- Bundled skills 优先注册，优先级高于文件系统技能
+
+### 41. 文档更新 ✅
+- ARCHITECTURE.md / DESIGN.md / CONTEXT_DESIGH.md / PLAN.md 反映当前项目状态
+
 ---
 
 ## P2 — 生态与体验
 
-### 36. 后台任务 + 进度
+### 42. 后台任务 + 进度
 - 长运行命令流式输出，不阻塞主 Agent 循环
 
-### 37. Checkpoint / Undo
+### 43. Checkpoint / Undo
 - 每次工具写入前自动保存快照
 - `/undo` 命令回滚
 
-### 38. MCP 协议支持
+### 44. MCP 协议支持
 - MCP client，连接外部 tool server
 
-### 39. Session 管理
+### 45. Session 管理
 - 对话存档/恢复，支持分支对话
 
-### 40. Plan 模式
+### 46. Plan 模式
 - 复杂改动先出方案文本，用户审批后执行
 
-### 41. 凭证管理
+### 47. 凭证管理
 - API key 安全存储，多 profile 切换
 
-### 42. 自动化测试
+### 48. 自动化测试
 - Agent 行为回归测试（mock LLM 响应）
 - 工具执行单元测试（mock 文件系统/shell）

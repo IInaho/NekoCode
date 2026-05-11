@@ -78,6 +78,7 @@ var (
 	SubtleStyle  = defaultStyles.Subtle
 	PrimaryStyle = defaultStyles.Primary
 	TealStyle    = defaultStyles.Teal
+	YellowStyle  = defaultStyles.Yellow
 	BorderStyle  = defaultStyles.Border
 	CatBodyStyle = defaultStyles.CatBody
 	CatEyeStyle  = defaultStyles.CatEye

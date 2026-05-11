@@ -117,17 +117,19 @@ func (l *List) InvalidateItem(idx int) {
 
 	if hadOld {
 		newItem := l.getItem(idx)
+		l.cacheMu.Lock()
 		if l.totalHeight >= 0 {
 			l.totalHeight += newItem.height - old.height
 		}
-		// Only invalidate the scroll offset cache if the changed item is above
-		// the current viewport — otherwise pixelsAbove is unaffected.
 		if idx < l.offsetIdx && l.pixelsAbove >= 0 {
 			l.pixelsAbove += newItem.height - old.height
 		}
+		l.cacheMu.Unlock()
 	} else {
+		l.cacheMu.Lock()
 		l.totalHeight = -1
 		l.pixelsAbove = -1
+		l.cacheMu.Unlock()
 	}
 }
 

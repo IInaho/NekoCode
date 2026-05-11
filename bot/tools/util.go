@@ -24,10 +24,10 @@ func TruncateByRune(s string, max int) string {
 	return string(runes[:max])
 }
 
-// validatePath resolves path against the current working directory.
+// ValidatePath resolves path against the current working directory.
 // It resolves symlinks and returns the absolute path, but no longer rejects
 // paths outside cwd — the confirmation system handles user consent.
-func validatePath(path string) (string, error) {
+func ValidatePath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("path resolution failed: %v", err)

@@ -2,10 +2,17 @@ package agent
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"nekocode/bot/tools"
 	"nekocode/llm"
+)
+
+const (
+	doomLoopWindow       = 3   // consecutive identical batches to trigger doom loop
+	lowOutputThreshold   = 3   // consecutive low-output turns before stopping
+	minOutputChars       = 200 // minimum tool output chars per turn
 )
 
 type RunResult struct {
@@ -177,9 +184,14 @@ func formatArgs(args map[string]interface{}) string {
 	if len(args) == 0 {
 		return ""
 	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	var pairs []string
-	for k, v := range args {
-		val := fmt.Sprint(v)
+	for _, k := range keys {
+		val := fmt.Sprint(args[k])
 		if strings.ContainsAny(val, ",=\"") {
 			val = `"` + strings.ReplaceAll(strings.ReplaceAll(val, "\\", "\\\\"), "\"", "\\\"") + `"`
 		}
@@ -217,24 +229,29 @@ func (a *Agent) Feedback(state *stepState, result *ActionResult) (*stepState, bo
 	return newState, shouldRetry, shouldStop
 }
 
-// doomLoopCheck detects 3+ consecutive identical tool calls and forces stop.
+// doomLoopCheck detects 3+ consecutive identical tool call batches and forces stop.
 func (a *Agent) doomLoopCheck(state *stepState, calls []tools.ToolCallItem) bool {
-	if len(calls) != 1 {
-		a.doomLoopHistory = nil
+	if len(calls) == 0 {
 		return false
 	}
-	key := calls[0].Name + "|" + formatArgs(calls[0].Args)
+	// Build a deterministic key from all tool calls in the batch.
+	parts := make([]string, len(calls))
+	for i, c := range calls {
+		parts[i] = c.Name + "|" + formatArgs(c.Args)
+	}
+	sort.Strings(parts)
+	key := strings.Join(parts, ";")
 	a.doomLoopHistory = append(a.doomLoopHistory, key)
-	if len(a.doomLoopHistory) > 3 {
+	if len(a.doomLoopHistory) > doomLoopWindow {
 		a.doomLoopHistory = a.doomLoopHistory[1:]
 	}
-	if len(a.doomLoopHistory) == 3 {
-		for i := 1; i < 3; i++ {
+	if len(a.doomLoopHistory) == doomLoopWindow {
+		for i := 1; i < doomLoopWindow; i++ {
 			if a.doomLoopHistory[i] != a.doomLoopHistory[0] {
 				return false
 			}
 		}
-		writeAgentLog("doomLoop: 3 identical calls to %s — forcing synthesis", calls[0].Name)
+		writeAgentLog("doomLoop: 3 identical call batches — forcing synthesis")
 		return true
 	}
 	return false
@@ -259,11 +276,10 @@ func (a *Agent) detectDiminishingReturns(state *stepState, results []tools.ToolC
 		return false // all tools were coordination — don't count as low output
 	}
 
-	const minOutput = 200
-	if totalOut < minOutput {
+	if totalOut < minOutputChars {
 		state.lowOutputTurns++
-		if state.lowOutputTurns >= 3 {
-			writeAgentLog("Feedback: stop — 3 consecutive low-output turns (<%d chars)", minOutput)
+		if state.lowOutputTurns >= lowOutputThreshold {
+			writeAgentLog("Feedback: stop — %d consecutive low-output turns (<%d chars)", lowOutputThreshold, minOutputChars)
 			return true
 		}
 	} else {

@@ -15,7 +15,7 @@ func (m *Manager) NeedsSummarization() bool {
 		return false
 	}
 	// Trigger at 80% since micro-compaction handles tool-result bloat first.
-	return m.estimatedTokens() > m.tokenBudget*8/10
+	return m.visibleEstimatedTokens() > m.tokenBudget*8/10
 }
 
 // Summarize compresses messages before the compact boundary via the configured
@@ -90,7 +90,7 @@ func (m *Manager) summarizeInternal(useSessionMemory bool, smContent string) err
 			if missing := m.verifySummary(newSummary); len(missing) > 0 {
 				verifyPrompt := BuildVerifyPrompt(toSummarize, m.summary, missing)
 				if rs, re := m.summarizer([]llm.Message{{Role: "user", Content: verifyPrompt}}, m.summary); re == nil && rs != "" {
-					newSummary = rs
+					m.summary = rs
 				}
 			}
 	}
@@ -152,130 +152,21 @@ func (m *Manager) CompactBoundary() int {
 	return m.compactBoundary
 }
 
-// PostCompactFiles scans messages that were compressed and re-injects the
-// most recently read files from the FileStateCache as context attachments.
-// This mirrors Claude Code's post-compact file re-creation.
-// Returns formatted file content ready for injection as a system message.
-func (m *Manager) PostCompactFiles(readFileCache interface{}) string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.compactBoundary <= 0 || m.summary == "" {
-		return ""
-	}
-
-	// Scan compressed messages for Read tool calls.
-	type fileRef struct {
-		path  string
-		index int // higher = more recent
-	}
-	seen := make(map[string]bool)
-	var refs []fileRef
-
-	for i := 0; i < m.compactBoundary && i < len(m.messages); i++ {
-		msg := m.messages[i]
-		if msg.Role == "assistant" {
-			for _, tc := range msg.ToolCalls {
-				if tc.Function.Name == "read" {
-					// Extract path from arguments (simple scan).
-					args := tc.Function.Arguments
-					path := extractPathFromArgs(args)
-					if path != "" && !seen[path] {
-						seen[path] = true
-						refs = append(refs, fileRef{path, i})
-					}
-				}
-			}
-		}
-	}
-
-	// Sort by index descending (most recent first), keep last 5.
-	for i := 0; i < len(refs); i++ {
-		for j := i + 1; j < len(refs); j++ {
-			if refs[j].index > refs[i].index {
-				refs[i], refs[j] = refs[j], refs[i]
-			}
-		}
-	}
-	if len(refs) > 5 {
-		refs = refs[:5]
-	}
-
-	if len(refs) == 0 {
-		return ""
-	}
-
-	// Build the file context attachment.
-	var b strings.Builder
-	b.WriteString("[Recently read files from compressed context]\n")
-	totalBudget := 20000 // 20K chars budget for file re-creation
-	for _, ref := range refs {
-		if totalBudget <= 0 {
-			break
-		}
-		// Try to get from FileStateCache if available.
-		content := getCachedFileContent(readFileCache, ref.path)
-		if content == "" {
-			continue
-		}
-		if len(content) > totalBudget {
-			content = content[:totalBudget] + "\n..."
-		}
-		b.WriteString(fmt.Sprintf("\n### %s\n%s\n", ref.path, content))
-		totalBudget -= len(content)
-	}
-	return b.String()
-}
-
-// extractPathFromArgs extracts the "path" value from a JSON tool call arguments string.
-func extractPathFromArgs(args string) string {
-	// Simple extraction: look for "path":"..." or "path": "..."
-	idx := strings.Index(args, `"path"`)
-	if idx < 0 {
-		return ""
-	}
-	// Find the value after "path":
-	rest := args[idx+6:]
-	colIdx := strings.Index(rest, ":")
-	if colIdx < 0 {
-		return ""
-	}
-	rest = rest[colIdx+1:]
-	rest = strings.TrimSpace(rest)
-	if len(rest) < 3 || rest[0] != '"' {
-		return ""
-	}
-	rest = rest[1:]
-	endIdx := strings.Index(rest, `"`)
-	if endIdx < 0 {
-		return ""
-	}
-	return rest[:endIdx]
-}
-
-// getCachedFileContent retrieves a file from the cache or reads it fresh.
-func getCachedFileContent(cache interface{}, path string) string {
-	// Type-assert to FileStateCache interface if available.
-	type fileReader interface {
-		GetContent(path string) (string, bool)
-	}
-	if fr, ok := cache.(fileReader); ok {
-		if content, found := fr.GetContent(path); found {
-			return content
-		}
-	}
-	return ""
-}
-
 // BuildPrompt assembles a structured summarization prompt from messages.
 func BuildPrompt(msgs []llm.Message, prevSummary string) string {
 	var b strings.Builder
 	for _, m := range msgs {
+		// Skip empty content, placeholder dots, and cleared markers
+		// so they don't pollute the summary with noise.
+		content := strings.TrimSpace(m.Content)
+		if content == "" || content == "." || content == clearedMarker {
+			continue
+		}
 		limit := 500
 		if m.Role == "tool" {
 			limit = 800 // tool results carry more signal
 		}
-		fmt.Fprintf(&b, "[%s]: %s\n", m.Role, truncateStr(m.Content, limit))
+		fmt.Fprintf(&b, "[%s]: %s\n", m.Role, truncateStr(content, limit))
 	}
 	conversation := b.String()
 

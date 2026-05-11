@@ -38,7 +38,7 @@
 
 **模型自由，不站队**
 
-MIT 开源，代码完全透明。Anthropic、OpenAI、GLM、DeepSeek 统一网关接入，一个工具切换所有模型。今天用 Claude 写代码，明天用 GLM 做中文创意——改一行配置的事。
+MIT 开源，代码完全透明。Anthropic、OpenAI、GLM、DeepSeek 统一网关接入，一个工具切换所有模型。今天用 AI 写代码，明天用 GLM 做中文创意——改一行配置的事。
 
 **终端也可以好看**
 
@@ -141,7 +141,7 @@ cat > ~/.nekocode/config.json << 'EOF'
 {
   "provider": "anthropic",
   "api_key": "sk-your-key-here",
-  "model": "claude-sonnet-4-5",
+  "model": "gpt-4",
   "base_url": "https://api.anthropic.com/v1",
   "token_budget": 128000
 }

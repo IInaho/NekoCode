@@ -65,6 +65,15 @@ func (m *Messages) SetSpinnerView(view string) {
 	m.mu.Unlock()
 }
 
+func (m *Messages) SetSkill(s string) {
+	m.mu.Lock()
+	if m.processingItem != nil {
+		m.processingItem.SetSkill(s)
+		m.invalidateProcessing()
+	}
+	m.mu.Unlock()
+}
+
 func (m *Messages) SetProcessingStatus(text string) {
 	m.mu.Lock()
 	if m.processingItem != nil {
@@ -198,6 +207,9 @@ func (m *Messages) AddMessage(msg message.ChatMessage) {
 		item = a
 	case "system":
 		s := message.NewSystemMessageItem(m.sty, msg.Content)
+		if msg.Title != "" {
+			s.SetTitle(msg.Title)
+		}
 		if msg.RenderedContent != "" {
 			s.SetRenderedContent(msg.RenderedContent)
 		}

@@ -1,6 +1,6 @@
 // context/project.go — project context preloading.
-// Discovers and loads NEKOCODE.md files at session start, similar to Claude Code's
-// CLAUDE.md mechanism. This eliminates repeated glob/grep/read exploration at the
+// Discovers and loads NEKOCODE.md files at session start.
+// This eliminates repeated glob/grep/read exploration at the
 // start of every conversation.
 
 package context

@@ -1,4 +1,4 @@
-package tools
+package builtin
 
 import (
 	"bufio"
@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"nekocode/bot/tools"
 )
 
 type WebSearchTool struct {
@@ -18,12 +19,12 @@ type WebSearchTool struct {
 }
 
 func NewWebSearchTool() *WebSearchTool {
-	return &WebSearchTool{client: NewToolHTTPClient(30 * time.Second)}
+	return &WebSearchTool{client: tools.NewToolHTTPClient(30 * time.Second)}
 }
 
 func (t *WebSearchTool) Name() string                                       { return "web_search" }
-func (t *WebSearchTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *WebSearchTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
+func (t *WebSearchTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeParallel }
+func (t *WebSearchTool) DangerLevel(map[string]interface{}) tools.DangerLevel     { return tools.LevelSafe }
 
 func (t *WebSearchTool) Description() string {
 	return fmt.Sprintf(
@@ -34,8 +35,8 @@ CRITICAL: After using search results, include a "Sources:" section listing every
 	)
 }
 
-func (t *WebSearchTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *WebSearchTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "query", Type: "string", Required: true, Description: "Search query"},
 		{Name: "numResults", Type: "number", Required: false, Description: "Number of results, default 8, max 15"},
 	}
@@ -86,7 +87,7 @@ func searchExa(ctx context.Context, query string, n int) (string, error) {
 		req.Header.Set("X-Api-Key", k)
 	}
 
-	resp, err := NewToolHTTPClient(30*time.Second).Do(req)
+	resp, err := tools.NewToolHTTPClient(30*time.Second).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -117,7 +118,7 @@ func parseExaSSE(r io.Reader) (string, error) {
 			continue
 		}
 		if len(v.Result.Content) > 0 && v.Result.Content[0].Text != "" {
-			return TruncateByRune(v.Result.Content[0].Text, 6000), nil
+			return tools.TruncateByRune(v.Result.Content[0].Text, 6000), nil
 		}
 	}
 	return "", scan.Err()

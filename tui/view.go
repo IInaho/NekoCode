@@ -38,11 +38,11 @@ func (m *Model) View() tea.View {
 		}
 	}
 
+	parts = append(parts, "", m.Input.View())
+
 	if sug := m.Suggestions.View(m.Width); sug != "" {
 		parts = append(parts, sug)
 	}
-
-	parts = append(parts, "", m.Input.View())
 
 	view := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
@@ -52,8 +52,16 @@ func (m *Model) View() tea.View {
 
 	c := m.Input.Cursor()
 	if c != nil {
-		above := lipgloss.JoinVertical(lipgloss.Left, parts[:len(parts)-2]...)
-		c.Y += lipgloss.Height(above) + 2
+		// Input is at parts[-1] (no suggestions) or parts[-2] (with suggestions).
+		inputIdx := len(parts) - 1
+		if m.Suggestions.Visible() {
+			inputIdx = len(parts) - 2
+		}
+		inputY := 0
+		for _, p := range parts[:inputIdx] {
+			inputY += lipgloss.Height(p)
+		}
+		c.Position.Y += inputY
 	}
 	v.Cursor = c
 

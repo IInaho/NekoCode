@@ -25,7 +25,7 @@ func (m *ErrorMessageItem) Render(width int) string {
 		return m.cache.rendered
 	}
 	contentW := cw - barOverhead
-	body := strings.TrimSpace(styles.RenderMarkdownWithWidth(strings.TrimSpace(m.content), contentW))
+	body := strings.TrimSpace(RenderMarkdown(strings.TrimSpace(m.content), contentW))
 	header := m.sty.Red.Bold(true).Render("!")
 	parts := []string{header, "", body}
 	joined := lipgloss.JoinVertical(lipgloss.Left, parts...)

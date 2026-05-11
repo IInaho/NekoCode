@@ -19,8 +19,10 @@ nekocode/
 │   └── retry.go                    #   指数退避重试（IsRetryable / Retry）
 ├── bot/                            # 核心逻辑
 │   ├── bot.go                      #   Bot 结构体、依赖注入、公开 API
-│   ├── config.go                   #   配置加载（~/.nekocode/config.json）
-│   ├── commands.go                 #   斜杠命令系统（Parser，/help，/new，/clear，/stats 等）
+│   ├── config/                     #   配置管理
+│   │   └── config.go               #     Config 结构体 + Load()（~/.nekocode/config.json）
+│   ├── command/                    #   斜杠命令系统
+│   │   └── parser.go               #     Parser + Command + Callbacks + RegisterDefaults
 │   ├── prompt/system.md            #   [embed] system prompt：人设 + 工具规则
 │   ├── session/                    #   Session Memory
 │   │   ├── memory.go               #     Memory 结构体 + Extractor（异步提取）
@@ -29,10 +31,13 @@ nekocode/
 │   │   └── project.go              #     NEKOCODE.md 发现 + @include 递归加载
 │   ├── skill/                      #   Skill 系统
 │   │   ├── skill.go                #     Registry + Workflow 类型 + 运行时引擎
-│   │   ├── discovery.go            #     .claude/skills/ 目录发现
+│   │   ├── discovery.go            #     .nekocode/skills/ 目录发现
 │   │   ├── inject.go               #     技能工作流注入 system prompt
 │   │   ├── loader.go               #     YAML 技能加载器
-│   │   └── tool_skill.go           #     /skill 工具触发技能执行
+│   │   ├── tool_skill.go           #     /skill 工具供 Agent 调用
+│   │   └── bundled/                #     内置 Skill（编译进二进制）
+│   │       ├── bundled.go          #       go:embed 加载 bundled/meta/SKILL.md
+│   │       └── meta/SKILL.md       #       内置 Skill 定义
 │   ├── ctxmgr/                     #   上下文管理
 │   │   ├── manager.go              #     Manager 结构体 + Build() 上下文组装 + 统计
 │   │   ├── compact.go              #     微压缩：token 紧张时清除旧工具结果
@@ -42,52 +47,51 @@ nekocode/
 │   │   ├── summarize_verify.go     #     摘要验证：LLM 生成的摘要二次校验后写入
 │   │   ├── storage.go              #     消息存取：Add/AddToolResult/Clear/FreshStart + BoltDB 持久化
 │   │   └── token.go                #     Token 估算（CJK ~1.5/token, ASCII ~4/token）
-│   ├── tools/                      #   工具系统（每工具一文件）
+│   ├── tools/                      #   工具系统核心（接口、注册、执行、安全）
 │   │   ├── tool.go                 #     Tool 接口、Registry、DangerLevel、ExecutionMode
 │   │   ├── util.go                 #     StripAnsi、TruncateByRune、validatePath、SplitPairs、NewToolHTTPClient
-│   │   ├── truncate.go              #     工具输出截断 (2000行/50KB)
+│   │   ├── truncate.go             #     工具输出截断（2000行/50KB）
 │   │   ├── descriptor.go           #     ToToolDefs()：Descriptor → LLM ToolDef 转换（共享）
 │   │   ├── confirm.go              #     ConfirmRequest、ConfirmFunc、PhaseFunc、Phase 常量
 │   │   ├── executor.go             #     Executor：并行/串行调度、危险分级检查、用户确认
-│   │   ├── guard.go                #     安全门控：敏感工具操作确认提示
+│   │   ├── guard.go                #     安全门控：敏感工具操作确认提示 + 注入检测
 │   │   ├── file_cache.go           #     FileStateCache：LRU + mtime 去重，跨子 Agent 共享
-│   │   ├── tool_bash.go            #     BashTool — Shell 命令 + 四级危险分级
-│   │   ├── tool_read.go            #     ReadTool — 文件读取（文本/图片/PDF）
-│   │   ├── tool_write.go           #     WriteTool — 文件创建/覆写
-│   │   ├── tool_edit.go            #     EditTool — 精确字符串替换 + diff 输出
-│   │   ├── tool_list.go            #     ListTool — 目录列表
-│   │   ├── tool_glob.go            #     GlobTool — 文件模式匹配（支持 ** 递归）
-│   │   ├── tool_grep.go            #     GrepTool — ripgrep 内容搜索
-│   │   ├── tool_task.go            #     TaskTool — 子 agent 委派
-│   │   ├── tool_todo.go            #     TodoWriteTool — 任务列表更新
-│   │   ├── tool_snip.go            #     SnipTool — 模型主动剪枝旧消息
-│   │   ├── tool_webfetch.go        #     WebFetchTool — HTTP GET + HTML→Markdown
-│   │   ├── tool_websearch.go       #     WebSearchTool — Exa MCP 搜索
-│   │   ├── html2md.go              #     HTML→Markdown 转换器
-│   │   └── html2md_test.go         #     HTML→Markdown 测试
+│   │   └── builtin/                #     内置工具实现（每工具一文件）
+│   │       ├── register.go         #       RegisterAll()：注册全部内置工具
+│   │       ├── tool_bash.go        #       BashTool — Shell 命令 + 四级危险分级
+│   │       ├── tool_read.go        #       ReadTool — 文件读取（文本/图片/PDF）
+│   │       ├── tool_write.go       #       WriteTool — 文件创建/覆写
+│   │       ├── tool_edit.go        #       EditTool — 精确字符串替换 + diff 输出
+│   │       ├── tool_list.go        #       ListTool — 目录列表
+│   │       ├── tool_glob.go        #       GlobTool — 文件模式匹配（支持 ** 递归）
+│   │       ├── tool_grep.go        #       GrepTool — ripgrep 内容搜索
+│   │       ├── tool_task.go        #       TaskTool — 子 agent 委派
+│   │       ├── tool_todo.go        #       TodoWriteTool — 任务列表更新
+│   │       ├── tool_snip.go        #       SnipTool — 模型主动剪枝旧消息
+│   │       ├── tool_webfetch.go    #       WebFetchTool — HTTP GET + HTML→Markdown
+│   │       ├── tool_websearch.go   #       WebSearchTool — Exa MCP 搜索
+│   │       ├── html2md.go          #       HTML→Markdown 转换器
+│   │       └── html2md_test.go     #       HTML→Markdown 测试
 │   └── agent/                      #   Agent 循环
 │       ├── agent.go                #     Agent 结构体、token 统计、Steer/Abort、replaceCtx
 │       ├── log.go                  #     Debug 日志（/tmp/nekocode-debug.log）
-│       ├── run.go                  #     主循环 (Reason→Execute→Feedback) + BTW 中断
+│       ├── run.go                  #     主循环（Reason→Execute→Feedback）+ BTW 中断
 │       ├── reasoner.go             #     LLM 调用、流式 token 处理、工具调用解析
-│       ├── executor.go             #     ActionResult 类型（Executor 已移入 tools）
+│       ├── executor.go             #     ActionResult 类型
 │       ├── retry.go                #     LLM 调用指数退避重试（0.5s→8s，最多4次）
-│       └── subagent/               #   子 agent 引擎
-│           ├── engine.go           #     独立子 agent 循环（共享 tools.Executor）
-│           ├── registry.go         #     AgentType 定义 + 注册机制
-│           └── agents.go           #     内置子 agent 定义（executor/verify/explore/plan/decompose）
+│       └── subagent/               #     子 agent 引擎
+│           ├── engine.go           #       独立子 agent 循环（共享 tools.Executor）
+│           ├── registry.go         #       AgentType 定义 + 注册机制
+│           └── agents.go           #       内置子 agent 定义（executor/verify/explore/plan/decompose）
 └── tui/                            # 终端 UI（Bubble Tea v2）
     ├── tui.go                      #   Run() 入口
-    ├── types.go                    #   BotInterface、ChatState、消息类型
-    ├── model.go                    #   Model 结构体 + 初始化 + 状态切换
+    ├── types.go                    #   BotInterface（18 方法）、chatState、doneMsg/confirmMsg
+    ├── model.go                    #   Model 结构体 + 初始化 + 状态切换 + Phase 常量
     ├── update.go                   #   tea.Update 消息分发
     ├── view.go                     #   tea.View 视图组装
-    ├── phase.go                    #   处理阶段常量 + setPhase
     ├── agent.go                    #   startChat/startAgent/runAgent/onAgentStep
+    ├── handlers.go                 #   按键处理 + 完成处理 + spinner tick（合并原3文件）
     ├── helpers.go                  #   工具参数格式化（formatBriefArgs）
-    ├── handlers_spin.go            #   spinner tick + 流式消息回调
-    ├── handlers_done.go            #   agent 完成后处理 + token 更新
-    ├── handlers_keys.go            #   按键处理 + 确认键 + suggestions
     ├── components/                 #   UI 组件
     │   ├── block/                  #   内容块类型与渲染
     │   │   ├── block.go            #     BlockType 枚举、ContentBlock 结构体
@@ -102,7 +106,8 @@ nekocode/
     │   │   ├── message_user.go     #     UserMessageItem
     │   │   ├── message_assistant.go #    AssistantMessageItem
     │   │   ├── message_system.go   #     SystemMessageItem
-    │   │   └── message_error.go    #     ErrorMessageItem
+    │   │   ├── message_error.go    #     ErrorMessageItem
+    │   │   └── markdown.go         #     glamour 封装（tokyo-night 主题，按宽度缓存）
     │   ├── processing/             #   流式渲染
     │   │   ├── processing.go       #     ProcessingItem 结构体 + mutator + Height
     │   │   ├── processing_render.go #    Render 编排器 + 5 个 section 方法
@@ -114,26 +119,28 @@ nekocode/
     │   ├── splash.go               #   Splash：ASCII 猫 + 猫眼闪烁
     │   ├── confirm_bar.go          #   ConfirmBar：工具确认卡片
     │   ├── suggestions.go          #   Suggestions：斜杠命令自动补全
-    │   ├── scrollbar.go            #   Scrollbar：独立滚动指示器
-    │   └── todo_list.go            #   TodoList：任务列表
+    │   └── scrollbar.go            #   Scrollbar：独立滚动指示器
     └── styles/                     #   样式
         ├── colors.go               #     色彩体系 + Styles 结构体 + FmtTokens
-        ├── charset.go              #     制表符字符集（含 ASCII 回退）
-        └── markdown.go             #     glamour 封装（tokyo-night 主题）
+        └── charset.go              #     制表符字符集（含 ASCII 回退）
 ```
 
 ## 包依赖图
 
 ```
 main
-  ├── bot ──────┬── session ──── ctxmgr + llm
+  ├── bot ──────┬── config ──── (stdlib)
+  │             ├── command ─── (stdlib)
+  │             ├── session ──── ctxmgr + llm
   │             ├── context ─── (stdlib)
-  │             ├── skill ────── tools + ctxmgr + llm
+  │             ├── skill ──────┬── tools + ctxmgr + llm
+  │             │               └── bundled ─── skill
   │             ├── agent ───┬── tools ─── llm
   │             │            ├── ctxmgr ─── llm
   │             │            ├── llm
   │             │            └── subagent ─── tools + ctxmgr + llm
-  │             ├── tools ─── llm
+  │             ├── tools ───┬── llm
+  │             │            └── builtin ─── tools + llm
   │             └── ctxmgr ─── llm
   └── tui ──────┬── bot (BotInterface)
                 ├── components/block ─── styles
@@ -145,9 +152,11 @@ main
 ```
 
 - `tools` 是整个系统的基础层：Tool 接口、Registry、Executor、Phase 类型、Confirm 类型
+- `tools/builtin` 包含所有内置工具的具体实现，通过 `RegisterAll()` 注册
 - `subagent` 与 `agent` 共享 `tools.Executor`，保证工具安全检查一致
+- `config` 和 `command` 为独立子包，通过 `bot.go` 组装
 - `session` 异步 goroutine 提取，依赖 `ctxmgr` 构建上下文
-- `skill` 技能系统，YAML 定义工作流，运行时引擎执行
+- `skill` 技能系统，YAML 定义工作流，运行时引擎执行；`bundled` 子包提供编译进二进制的内置技能
 - `context` 项目上下文预加载，NEKOCODE.md 发现与 @include 递归
 - `tui/components/block` 导出 `BuildToolGroups` 和 `ToolGroupInfo`，streaming 和 message 两边共用
 
@@ -277,7 +286,7 @@ bash 命令智能分级：匹配 `go version`、`git log`、`git diff`、`ls`、
 
 ### 文件缓存
 
-`GlobalFileCache`（`tools/file_cache.go`）在多次 read 调用间缓存文件内容。LRU 驱逐策略（100 条目 / 25MB 上限），基于文件 mtime + offset + limit 的精确去重。子 Agent 自动共享同一缓存实例。缓存命中时返回 `[File unchanged: ...]` stub，避免重复磁盘 I/O。
+`GlobalFileCache`（`tools/file_cache.go`）在多次 read 调用间缓存文件内容。LRU 驱逐策略（100 条目 / 25MB 上限），基于文件 mtime + size 校验自动失效。子 Agent 自动共享同一缓存实例。缓存命中时直接返回缓存内容，避免重复磁盘 I/O。
 
 ### 安全门控
 
@@ -285,28 +294,84 @@ bash 命令智能分级：匹配 `go version`、`git log`、`git diff`、`ls`、
 
 ## 幻觉防治体系
 
-基于 Claude Code / OpenCode 的纵深防御思想，构建了 9 层防幻觉体系：
+基于纵深防御思想，在 6 个代码层面实现 43 个防幻觉机制（以下仅列出代表性机制）：
 
-| 层 | 机制 | 位置 |
-|----|------|------|
-| 0 物理锚定 | 输出截断 + 先读后改强制 + 二进制检测 | `tools/truncate.go`, `executor.go`, `tool_read.go` |
-| 1 提示约束 | 反幻觉指令 + 日期注入 + 来源引用 + 推理长度限制 | `prompt/system.md`, `bot.go` |
-| 2 独立验证 | verify agent 格式强制 + 自检清单 + 反子 agent 提示 | `subagent/agents.go` |
-| 3 记忆漂移 | 模板警告 + "当前现实优先"指令 | `session/memory_template.md` |
-| 4 外部溯源 | web_search/fetch 强制引用 + 125字符限制 | `tool_websearch.go`, `tool_webfetch.go` |
-| 5 上下文保真 | Critical Preservation Rules (代码/错误/路径) | `ctxmgr/summarize.go` |
-| 6 格式锚定 | 文件未找到智能建议 (Levenshtein) | `tool_read.go` |
-| 7 错误边界 | 末日循环检测 + Edit 模糊匹配 (3轮) + finish_reason=length 两级升级 | `agent/run.go`, `tool_edit.go`, `agent/reasoner.go` |
-| 8 思考控制 | Anthropic adaptive 模式 + DeepSeek 默认关 thinking | `llm/anthropic.go`, `llm/openai_compat.go`, `bot/bot.go` |
+### 第 1 层：工具安全
 
-### 思考模式管理
+| 机制 | 位置 |
+|------|------|
+| 危险等级四级分类（Safe/Write/Destructive/Forbidden） | `tools/tool.go` |
+| bash 命令关键词智能分级（sudo/rm/kill → Forbidden/Destructive，ls/pwd → Safe） | `tools/builtin/tool_bash.go` |
+| 路径验证 + 符号链接解析 | `tools/util.go` |
+| 二进制文件检测（null 字节 + UTF-8 校验 + 可打印比例） | `tools/builtin/tool_read.go` |
+| URL 校验 + 内网 IP 拒绝（SSRF 防护） | `tools/builtin/tool_webfetch.go` |
+| WebFetch 重定向上限 5 次 | `tools/builtin/tool_webfetch.go` |
+| Web 搜索结果上限 15 条 | `tools/builtin/tool_websearch.go` |
 
-基于 Claude Code 源码分析：`getAPIProvider()` 返回 `firstParty` 导致 DeepSeek 被当作 Anthropic 内部模型，`modelSupportsAdaptiveThinking` 默认 `true`，最终发送 `thinking: {type: "adaptive"}`。DeepSeek 不认识 `adaptive` → 不开启思考。
+### 第 2 层：执行拦截
 
-- **Anthropic 端点** (`llm/anthropic.go`): 默认 `thinkingType: "adaptive"`，`SetThinkingBudget(N)` 切到 `enabled`（budget_tokens 分离），`SetDisableThinking(true)` 切到 `disabled`
-- **OpenAI 兼容端点** (`llm/openai_compat.go`): 默认 `SetDisableThinking(true)`，发送 `{"thinking": {"type": "disabled"}}`
-- **finish_reason=length 两级升级** (`agent/reasoner.go`): Tier 1 提升 max_tokens 到 64000；Tier 2 调用 `SetDisableThinking(true)` 重试
-- **reasoning token 统计**: `token.ReasoningContent` 计入 `estCompl++` + `AddTokens(0,1)`，与 content token 统一统计
+| 机制 | 位置 |
+|------|------|
+| DangerLevel 强制校验：LevelForbidden 直接拒绝，LevelWrite+ 需用户确认 | `tools/executor.go` |
+| 先读后改强制：write/edit 前检查文件是否已 read，未读则拒绝 | `tools/executor.go` |
+| 文件读取追踪（MarkRead/WasRead），跨子 Agent 共享 | `tools/executor.go` |
+| 并行/串行分区调度 + worker pool 上限 10 | `tools/executor.go` |
+
+### 第 3 层：输出完整性
+
+| 机制 | 位置 |
+|------|------|
+| 工具结果边界标记（`--- BEGIN/END tool_result ---`） | `tools/guard.go` |
+| Prompt Injection 检测（~30 个中英文指令模式，风险权重 1-3 分级） | `tools/guard.go` |
+| 工具输出截断（2000行/50KB） | `tools/truncate.go` |
+| Web 内容截断（WebFetch 3000 runes，WebSearch 6000 runes） | `tools/builtin/tool_webfetch.go`, `tool_websearch.go` |
+| Garbled tool call 检测（截断 XML/JSON 片段过滤） | `agent/reasoner.go` |
+
+### 第 4 层：Agent 循环控制
+
+| 机制 | 位置 |
+|------|------|
+| 末日循环检测：连续 3 次相同工具调用 → forceSynthesize | `agent/run.go` |
+| 收益递减检测：连续 3 回合工具输出 < 200 字符 → 强制停止 | `agent/run.go` |
+| 断路器：searchCount ≥ 4 && fetchCount == 0 → 强制停止 | `bot/bot.go` |
+| ContextTransform：工具结果 > 20 条时注入推进提示 | `bot/bot.go` |
+| finish_reason=length 两级升级（Tier 1: max_tokens → 64000，Tier 2: 关 thinking） | `agent/reasoner.go` |
+| LLM 调用指数退避重试（0.5s→8s，最多 4 次）+ 错误分类 | `agent/retry.go`, `llm/retry.go` |
+
+### 第 5 层：上下文保真
+
+| 机制 | 位置 |
+|------|------|
+| 关键约束锚定（10 个正则提取 "不要/必须/do not/must" 等，永不压缩） | `ctxmgr/anchor.go` |
+| 当前目标锚定（提取首条实质性用户消息 + session memory） | `ctxmgr/anchor.go` |
+| 每次 Add() 自动提取用户消息中的约束 | `ctxmgr/storage.go` |
+| 摘要后约束验证 + 缺失时重新摘要（最多 1 次） | `ctxmgr/summarize_verify.go` |
+| 摘要尾部保留最后 3 轮对话 | `ctxmgr/summarize.go` |
+| 微压缩（50% 预算时清除旧工具结果，保留最近 5 条） | `ctxmgr/compact.go` |
+| 五级自动压缩（Normal → Warning → Micro → Compact → Blocking） | `ctxmgr/auto_compact.go` |
+| Build() 孤儿 tool 消息过滤 + 空内容兜底 | `ctxmgr/manager.go` |
+| Token 估算（ASCII ~4/token, CJK ~1.5/token）+ API 校准 | `ctxmgr/token.go` |
+
+### 第 6 层：LLM 调用控制
+
+| 机制 | 位置 |
+|------|------|
+| Anthropic thinking budget 钳制（min(16000, maxTokens/2)，budget < maxTokens 强制） | `llm/anthropic.go` |
+| OpenAI 兼容默认关 thinking（`{"thinking": {"type": "disabled"}}`） | `llm/openai_compat.go` |
+| 子 Agent thinking 强制关闭（注释："Sub-agents execute — they don't need extended reasoning"） | `bot/bot.go` |
+| finish_reason=length 时关 thinking 释放全部 token 给输出 | `agent/reasoner.go` |
+| Anthropic 开启 thinking 时 temperature 强制设为 1 | `llm/anthropic.go` |
+
+### 非代码层（prompt/设计级补充）
+
+以下机制通过 system prompt 和子 agent 提示文本实现，属于设计级防护，不在此表中：
+
+- System prompt 反幻觉指令（禁止生成 URL、忠实报告、先验证再声称完成）
+- 日期注入（防止时间幻觉）
+- 推理长度限制（bug fix 1 句、重构 3 句、设计 5 句）
+- verify agent 格式强制 + 自检清单
+- Session memory 模板警告（"记忆说 X 存在 ≠ X 现在存在"）
+- web_search/fetch 的 Sources 引用格式要求（prompt 文本，非代码强制）
 
 ## TUI 组件树
 
@@ -331,6 +396,10 @@ Model
 
 Ctrl+E 触发 `toggleBlocks()`：检测可折叠组/独立 edit 块，取反 `Collapsed` 状态。`BuildToolGroups` 和 `RenderEditGroupExpanded` 在 `block_render.go` 和 `processing_render.go` 两侧共享。
 
+### Markdown 渲染
+
+`tui/components/message/markdown.go` 封装 glamour 库，使用 tokyo-night 主题。按终端宽度缓存 renderer 实例（40-160 字符），`Warmup()` 预创建常用宽度的渲染器以加速首屏显示。
+
 ### 输出噪声过滤
 
 `processing/text.go` 的 `isEmptyOrNoise()` 检测纯空白、纯点号、纯符号行。全噪声时 `renderOutputSection()` 跳过渲染。
@@ -351,7 +420,7 @@ Agent 处理中用户可输入新消息打断当前 LLM 调用并注入上下文
 
 ### 指数退避重试
 
-`retry.go`：LLM 调用失败自动重试，0.5s→1s→2s→4s→8s（最多 4 次）。
+`llm/retry.go` 和 `agent/retry.go`：LLM 调用失败自动重试，0.5s→1s→2s→4s→8s（最多 4 次）。
 
 ### 确认机制
 
@@ -405,14 +474,31 @@ type LLM interface {
 | **子 Agent** | `bot/agent/subagent/` | 独立循环，thinking 禁用，共享 tools.Executor |
 | **LLM 网关** | `llm/` | 统一对接多 provider，共享 HTTP 连接池，流式解析 |
 | **工具系统** | `bot/tools/` | Tool 接口 + Executor + DangerLevel + 路径安全 + Phase 类型 |
+| **内置工具** | `bot/tools/builtin/` | 12 个内置工具的具体实现，通过 RegisterAll() 注册 |
 | **上下文管理** | `bot/ctxmgr/` | 五级预警 + 滑动窗口 + 微压缩 + 锚点 + 摘要验证 + Snip + BoltDB |
 | **Session Memory** | `bot/session/` | 异步 Markdown 提取，免费摘要 |
 | **Skill 系统** | `bot/skill/` | YAML 技能定义 + 发现 + 注入 + 运行时引擎 |
+| **内置 Skill** | `bot/skill/bundled/` | 编译进二进制的内置技能（go:embed） |
 | **项目上下文** | `bot/context/` | NEKOCODE.md 发现 + @include 递归加载 |
 | **Bot 组装** | `bot/bot.go` | 依赖注入，ShouldStop，ContextTransform，session 接线 |
-| **命令系统** | `bot/commands.go` | 斜杠命令解析与注册 |
-| **配置** | `bot/config.go` | `~/.nekocode/config.json` 加载 |
-| **TUI** | `tui/` | Bubble Tea v2，BotInterface 解耦，组件化 |
+| **命令系统** | `bot/command/` | 斜杠命令解析与注册，Callbacks 模式解耦 |
+| **配置** | `bot/config/` | `~/.nekocode/config.json` 加载 |
+| **TUI** | `tui/` | Bubble Tea v2，BotInterface（18 方法）解耦，组件化 |
+
+## Skill 系统
+
+### 双层 Skill 来源
+
+1. **Bundled Skills** (`bot/skill/bundled/`)：编译进二进制的内置技能，使用 `go:embed` 加载 `meta/SKILL.md`，始终可用
+2. **File-based Skills** (`bot/skill/discovery.go`)：从 `.nekocode/skills/` 目录自动发现 YAML 技能定义
+
+### 注册顺序
+
+Bundled skills 优先注册，保证内置技能优先级高于文件系统技能。Skill 同时注册为斜杠命令（`/<skill-name>`）和工具（供 Agent 调用）。
+
+### 技能上下文管理
+
+Agent 调用技能时，技能内容注入为 user 消息。下一轮若不再需要该技能，自动通过 snip 清除技能消息，释放上下文空间。
 
 ## 配置
 

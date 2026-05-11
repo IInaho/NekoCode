@@ -4,13 +4,13 @@ import (
 	"fmt"
 
 	"nekocode/bot"
-	"nekocode/tui/styles"
+	"nekocode/tui/components/message"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func Run() {
-	styles.Warmup()
+	message.Warmup()
 	b := bot.New()
 	p := tea.NewProgram(NewModel(b))
 	if _, err := p.Run(); err != nil {

@@ -28,7 +28,7 @@ type Model struct {
 	state           chatState
 	processingStart time.Time
 	processingPhase string
-	Todos           *components.TodoList
+	activeSkill     string // skill activated this turn, shown in status bar
 	Suggestions     *components.Suggestions
 	ConfirmBar      *components.ConfirmBar
 	Scrollbar       *components.Scrollbar
@@ -49,7 +49,6 @@ func NewModel(b BotInterface) *Model {
 		Input:       components.NewInput(80),
 		Splash:      components.NewSplash(80, 24, version),
 		Spinner:     sp,
-		Todos:       components.NewTodoList(),
 		Suggestions: components.NewSuggestions(&sty),
 		ConfirmBar:  components.NewConfirmBar(&sty),
 		Scrollbar:   components.NewScrollbar(&sty),
@@ -69,7 +68,6 @@ func NewModel(b BotInterface) *Model {
 	})
 
 	b.WireTodoWrite(func(items []tools.TodoItem) {
-		m.Todos.SetItems(items)
 		m.Messages.SetTodos(todoItemsText(items))
 		b.SetCtxTodos(todoItemsText(items))
 	})
@@ -84,7 +82,10 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) resizeMessages() {
 	extra := 0
 	if m.state == stateConfirming {
-		extra = m.ConfirmBar.Height(m.Width)
+		extra += m.ConfirmBar.Height(m.Width)
+	}
+	if m.Suggestions.Visible() {
+		extra += m.Suggestions.Height()
 	}
 	m.Messages.SetSize(m.Width-1, m.Height-m.Header.Height()-m.Input.Height()-contentMarginV-extra)
 }
@@ -103,7 +104,6 @@ func (m *Model) transitionTo(state chatState) {
 		m.Messages.SetProcessingStatus(PhaseWaiting)
 
 		m.Messages.SetProcessing(true)
-		m.Todos.SetItems(nil)
 		m.Input.SetSending(true)
 	case stateConfirming:
 	}
@@ -118,6 +118,23 @@ func listenConfirm(ch <-chan tools.ConfirmRequest) tea.Cmd {
 		}
 		return confirmMsg{req: req}
 	}
+}
+
+// Processing phases displayed in the status line during agent execution.
+const (
+	phaseSteer     = "Processing new input..."
+	PhaseReady     = tools.PhaseReady
+	PhaseWaiting   = tools.PhaseWaiting
+	PhaseThinking  = tools.PhaseThinking
+	PhaseReasoning = tools.PhaseReasoning
+	PhaseRunning   = tools.PhaseRunning
+)
+
+func (m *Model) setPhase(p string) {
+	if m.processingPhase == phaseSteer && p == PhaseWaiting {
+		return
+	}
+	m.processingPhase = p
 }
 
 func todoItemsText(items []tools.TodoItem) string {

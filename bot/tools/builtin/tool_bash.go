@@ -1,7 +1,7 @@
 // BashTool — execute shell commands. DangerLevel auto-classified by command keywords:
 // forbidden (sudo/eval/ssh) -> reject, destructive (rm/kill/shutdown) -> confirm,
 // write (mkdir/cp/git commit) -> confirm, rest -> auto-approve.
-package tools
+package builtin
 
 import (
 	"context"
@@ -9,12 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"nekocode/bot/tools"
 )
 
 type BashTool struct{}
 
 func (t *BashTool) Name() string                                       { return "bash" }
-func (t *BashTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
+func (t *BashTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeSequential }
 
 func (t *BashTool) Description() string {
 	return `Execute shell commands.
@@ -33,13 +34,13 @@ Rules:
 - CRITICAL: Always create NEW commits, never amend`
 }
 
-func (t *BashTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *BashTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "command", Type: "string", Required: true, Description: "The command to execute"},
 	}
 }
 
-func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
+func (t *BashTool) DangerLevel(args map[string]interface{}) tools.DangerLevel {
 	cmd, _ := args["command"].(string)
 	cmd = strings.TrimSpace(cmd)
 
@@ -49,7 +50,7 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 		"> /dev/", "mkfs", "dd ", "chown", "chmod 777",
 		"| bash", "| sh", "|bash", "|sh",
 	}) {
-		return LevelForbidden
+		return tools.LevelForbidden
 	}
 
 	if matchAny(cmd, []string{
@@ -57,7 +58,7 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 		"shutdown", "reboot", "mv ", "git push", "git reset --hard",
 		"docker rm", "docker rmi",
 	}) {
-		return LevelDestructive
+		return tools.LevelDestructive
 	}
 
 	if matchAny(cmd, []string{
@@ -65,15 +66,15 @@ func (t *BashTool) DangerLevel(args map[string]interface{}) DangerLevel {
 		"gzip ", "git commit", "git add", "pip install", "npm install",
 		"go install", "cargo install", "make ", "docker build",
 	}) {
-		return LevelWrite
+		return tools.LevelWrite
 	}
 
 	// Commands that only produce output — no file system changes.
 	if isReadOnly(cmd) {
-		return LevelSafe
+		return tools.LevelSafe
 	}
 
-	return LevelWrite
+	return tools.LevelWrite
 }
 
 var readOnlyPrefixes = []string{
@@ -118,7 +119,7 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	cmd.Dir, _ = os.Getwd()
 	output, err := cmd.CombinedOutput()
 
-	cleaned := StripAnsi(string(output))
+	cleaned := tools.StripAnsi(string(output))
 
 	if err != nil {
 		return "", fmt.Errorf("command failed: %v\nOutput: %s", err, cleaned)

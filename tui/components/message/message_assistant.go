@@ -73,7 +73,7 @@ func (m *AssistantMessageItem) Render(width int) string {
 	if m.renderedContent != "" {
 		raw = m.renderedContent
 	}
-	body := strings.TrimSpace(styles.RenderMarkdownWithWidth(strings.TrimSpace(raw), contentW))
+	body := strings.TrimSpace(RenderMarkdown(strings.TrimSpace(raw), contentW))
 	if body != "" {
 		msgParts = append(msgParts, body)
 	}

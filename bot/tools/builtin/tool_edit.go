@@ -1,6 +1,6 @@
 // EditTool — precise string replacement. Finds the first occurrence of old_string in a file and replaces it with new_string.
 // On failure, returns file content with line numbers to help locate the discrepancy.
-package tools
+package builtin
 
 import (
 	"context"
@@ -8,27 +8,28 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"nekocode/bot/tools"
 )
 
 type EditTool struct{}
 
 func (t *EditTool) Name() string                                       { return "edit" }
-func (t *EditTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeSequential }
+func (t *EditTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeSequential }
 
 func (t *EditTool) Description() string {
 	return "Precise string replacement. ALWAYS prefer Edit over Write for modifications. MUST Read file first. old_string must match character-for-character (including indentation/newlines) and be unique. Use replace_all=true to replace all occurrences."
 }
 
-func (t *EditTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *EditTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "path", Type: "string", Required: true, Description: "File path to edit"},
 		{Name: "old_string", Type: "string", Required: true, Description: "The original string to replace (must match exactly)"},
 		{Name: "new_string", Type: "string", Required: true, Description: "The replacement string"},
 	}
 }
 
-func (t *EditTool) DangerLevel(args map[string]interface{}) DangerLevel {
-	return LevelWrite
+func (t *EditTool) DangerLevel(args map[string]interface{}) tools.DangerLevel {
+	return tools.LevelWrite
 }
 
 func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -37,7 +38,7 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 		return "", fmt.Errorf("missing path parameter")
 	}
 
-	safePath, err := validatePath(path)
+	safePath, err := tools.ValidatePath(path)
 	if err != nil {
 		return "", err
 	}
@@ -56,7 +57,7 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 
 	idx, pass := findWithFuzzy(text, oldStr)
 	if idx == -1 {
-		return "", fmt.Errorf("string not found in file. File contents (%s):\n%s\nHint: use Read to re-read the file, confirm the exact content before retrying.", filepath.Base(safePath), withLineNumbers(StripAnsi(text)))
+		return "", fmt.Errorf("string not found in file. File contents (%s):\n%s\nHint: use Read to re-read the file, confirm the exact content before retrying.", filepath.Base(safePath), withLineNumbers(tools.StripAnsi(text)))
 	}
 
 	var replaced string
@@ -156,10 +157,12 @@ func fuzzyIndex(text, oldStr string, fn lineNorm) int {
 		} else {
 			// Inside the target line.
 			offset := idx - normPos
-			// Scan character-by-character within this line.
+			// Scan byte-by-byte within this line. Compare raw bytes
+			// (not fn-wrapped) because fn incorrectly strips mid-line
+			// whitespace when applied to single bytes.
 			o, n := 0, 0
 			for n < offset && o < len(origLine) {
-				if fn(string(origLine[o])) == string(normLine[n]) {
+				if origLine[o] == normLine[n] {
 					n++
 				}
 				o++
@@ -180,7 +183,7 @@ func lineAt(s string, pos int) string {
 }
 
 func withLineNumbers(content string) string {
-	content = StripAnsi(content)
+	content = tools.StripAnsi(content)
 	lines := strings.Split(content, "\n")
 	var b strings.Builder
 	maxShow := 40

@@ -1,4 +1,4 @@
-package tools
+package builtin
 
 import (
 	"context"
@@ -9,20 +9,24 @@ import (
 	_ "image/png"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"unicode/utf8"
+
+	"nekocode/bot/tools"
 )
 
 type ReadTool struct{}
 
-func (t *ReadTool) Name() string                                   { return "read" }
-func (t *ReadTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *ReadTool) DangerLevel(map[string]interface{}) DangerLevel    { return LevelSafe }
+func (t *ReadTool) Name() string                                              { return "read" }
+func (t *ReadTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode   { return tools.ModeParallel }
+func (t *ReadTool) DangerLevel(map[string]interface{}) tools.DangerLevel       { return tools.LevelSafe }
 func (t *ReadTool) Description() string {
 	return "Read file contents. Supports text, images, PDF. ALWAYS use Read — NEVER invoke cat/head/tail as Bash. Path must be absolute. Default max 2000 lines; use offset/limit for large files, or Grep for search."
 }
 
-func (t *ReadTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *ReadTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "path", Type: "string", Required: true, Description: "File path (absolute)"},
 		{Name: "offset", Type: "integer", Required: false, Description: "Starting line number (1-based). Use for chunked reads on large files"},
 		{Name: "limit", Type: "integer", Required: false, Description: "Number of lines to read, default 2000"},
@@ -48,9 +52,6 @@ func (t *ReadTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	}
 }
 
-// readTextCached checks the FileStateCache before reading. If the file hasn't
-// changed since last read (same mtime+size) and the requested range is covered,
-// returns a stub instead of re-sending full content.
 func (t *ReadTool) readTextCached(path string, args map[string]interface{}) (string, error) {
 	offset := 1
 	if v, ok := args["offset"].(float64); ok && v > 0 {
@@ -61,32 +62,25 @@ func (t *ReadTool) readTextCached(path string, args map[string]interface{}) (str
 		limit = int(v)
 	}
 
-	if GlobalFileCache != nil {
-		if _, hit := GlobalFileCache.Get(path, offset, limit); hit {
-			return fmt.Sprintf("[File unchanged: %s — content matches previous read at offset=%d limit=%d. Use different offset/limit to re-read.]",
-				filepath.Base(path), offset, limit), nil
+	if tools.GlobalFileCache != nil {
+		if content, hit := tools.GlobalFileCache.Get(path, offset, limit); hit {
+			return content, nil
 		}
 	}
 
-	result, err := t.readText(path, args)
+	result, err := t.readText(path, offset, limit)
 	if err != nil {
 		return result, err
 	}
 
-	// Cache non-error results.
-	// isPartial is true when the read didn't cover the entire file from
-	// the beginning, or the file was truncated. Detected via the trailer
-	// readText appends ("\n\n[File has N lines, showing...]"), which is
-	// distinctive enough not to be confused with file content.
-	if GlobalFileCache != nil && !strings.HasPrefix(result, "[Binary") && !strings.HasPrefix(result, "[file is empty") {
-		isPartial := offset > 1 || strings.Contains(result, "\n\n[File has ")
-		GlobalFileCache.Put(path, result, offset, limit, isPartial)
+	if tools.GlobalFileCache != nil && !strings.HasPrefix(result, "[Binary") && !strings.HasPrefix(result, "[file is empty") {
+		tools.GlobalFileCache.Put(path, result, offset, limit)
 	}
 
 	return result, nil
 }
 
-func (t *ReadTool) readText(path string, args map[string]interface{}) (string, error) {
+func (t *ReadTool) readText(path string, offset, limit int) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -107,24 +101,19 @@ func (t *ReadTool) readText(path string, args map[string]interface{}) (string, e
 			filepath.Base(path)), nil
 	}
 
-	text := StripAnsi(string(content))
+	text := tools.StripAnsi(string(content))
 	lines := strings.Split(text, "\n")
 	totalLines := len(lines)
 
-	offset := 1
-	if v, ok := args["offset"].(float64); ok && v > 0 {
-		offset = int(v)
-	}
-	limit := maxReadLines
-	if v, ok := args["limit"].(float64); ok && v > 0 {
-		limit = int(v)
+	if totalLines == 1 && lines[0] == "" {
+		return "[file is empty]", nil
 	}
 
 	if offset > totalLines {
 		return fmt.Sprintf("[File %s has %d lines, offset %d out of range]", filepath.Base(path), totalLines, offset), nil
 	}
 
-	start := offset - 1 // 1-based to 0-based
+	start := offset - 1
 	end := start + limit
 	if end > totalLines {
 		end = totalLines
@@ -148,28 +137,44 @@ func (t *ReadTool) readText(path string, args map[string]interface{}) (string, e
 	return result, nil
 }
 
-// isBinary detects binary files by checking for null bytes and non-printable
-// character ratio in the first 4096 bytes.
 func isBinary(data []byte) bool {
-	checkLen := 4096
-	if len(data) < checkLen {
-		checkLen = len(data)
-	}
-	if checkLen == 0 {
+	if len(data) == 0 {
 		return false
 	}
-	for _, b := range data[:checkLen] {
+
+	nullCheck := 8192
+	if len(data) < nullCheck {
+		nullCheck = len(data)
+	}
+	for _, b := range data[:nullCheck] {
 		if b == 0 {
 			return true
 		}
 	}
+
+	utf8Check := data
+	if len(utf8Check) >= 3 && utf8Check[0] == 0xEF && utf8Check[1] == 0xBB && utf8Check[2] == 0xBF {
+		utf8Check = utf8Check[3:]
+	}
+	maxUTF8 := 65536
+	if len(utf8Check) < maxUTF8 {
+		maxUTF8 = len(utf8Check)
+	}
+	if utf8.Valid(utf8Check[:maxUTF8]) {
+		return false
+	}
+
+	ratioCheck := 8192
+	if len(data) < ratioCheck {
+		ratioCheck = len(data)
+	}
 	nonPrintable := 0
-	for _, b := range data[:checkLen] {
+	for _, b := range data[:ratioCheck] {
 		if b != '\n' && b != '\r' && b != '\t' && (b < 32 || b > 126) {
 			nonPrintable++
 		}
 	}
-	return float64(nonPrintable)/float64(checkLen) > 0.3
+	return float64(nonPrintable)/float64(ratioCheck) > 0.3
 }
 
 func (t *ReadTool) readImage(path string) (string, error) {
@@ -204,8 +209,6 @@ func (t *ReadTool) readPDF(path string) (string, error) {
 		filepath.Base(path), sizeStr, size), nil
 }
 
-// suggestSimilar returns up to 3 files in the same directory with names
-// similar to the requested path.
 func suggestSimilar(path string) []string {
 	dir := filepath.Dir(path)
 	base := strings.ToLower(filepath.Base(path))
@@ -224,7 +227,7 @@ func suggestSimilar(path string) []string {
 		name := strings.ToLower(e.Name())
 		score := 0
 		if name == base {
-			continue // exact match shouldn't happen for not-found
+			continue
 		}
 		if strings.Contains(name, base) || strings.Contains(base, name) {
 			score = 10
@@ -242,14 +245,7 @@ func suggestSimilar(path string) []string {
 			}{filepath.Join(dir, e.Name()), score})
 		}
 	}
-	// Sort by score descending, stable.
-	for i := 0; i < len(scored); i++ {
-		for j := i + 1; j < len(scored); j++ {
-			if scored[j].score > scored[i].score {
-				scored[i], scored[j] = scored[j], scored[i]
-			}
-		}
-	}
+	sort.SliceStable(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 	if len(scored) > 3 {
 		scored = scored[:3]
 	}

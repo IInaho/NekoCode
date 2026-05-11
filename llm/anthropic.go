@@ -28,7 +28,7 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 		Model:        model,
 		maxTokens:    32000,
 		temperature:  0.7,
-		thinkingType: "adaptive", // Claude Code default — safe for DeepSeek too
+		thinkingType: "adaptive", // default thinking mode — safe for DeepSeek too
 	}
 }
 
@@ -211,7 +211,7 @@ func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream boo
 			"budget_tokens": budget,
 		}
 		req.Temperature = 1 // API requires temperature when thinking is enabled
-	default: // "adaptive" — Claude Code default, DeepSeek ignores it → no thinking
+	default: // "adaptive" — DeepSeek ignores it → no thinking
 		req.Thinking = map[string]string{"type": "adaptive"}
 	}
 	return req, nil

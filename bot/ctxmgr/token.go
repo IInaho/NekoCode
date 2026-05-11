@@ -6,6 +6,12 @@ import (
 	"nekocode/llm"
 )
 
+const (
+	asciiCharsPerToken = 4 // heuristic: ~4 ASCII chars per token
+	toolCallOverhead   = 8 // per-tool-call token overhead
+	toolOverheadTokens = 200
+)
+
 // estimatedTokens must be called with the lock held.
 func (m *Manager) estimatedTokens() int {
 	return estimateTokens(m.messages) + estimateTokensSystem(m.systemPrompt, m.summary)
@@ -24,7 +30,7 @@ func estimateTokens(msgs []llm.Message) int {
 			n += estimateString(tc.ID)
 			n += estimateString(tc.Function.Name)
 			n += estimateString(tc.Function.Arguments)
-			n += 8
+			n += toolCallOverhead
 		}
 	}
 	return n
@@ -56,14 +62,14 @@ func estimateString(s string) int {
 			asciiChars++
 		}
 	}
-	tokens := (asciiChars + 3) / 4
-	tokens += (cjkChars*2 + 2) / 3
+	tokens := (asciiChars + asciiCharsPerToken - 1) / asciiCharsPerToken
+	tokens += (cjkChars*2 + 2) / 3 // CJK: ~1.5 chars/token, ceiling via (2n+2)/3
 	return tokens
 }
 
 func tokenOverhead(withTools bool) int {
 	if withTools {
-		return 200
+		return toolOverheadTokens
 	}
 	return 0
 }

@@ -1,5 +1,5 @@
-// GlobTool — file pattern matching, always LevelSafe auto-approve.
-package tools
+// GlobTool — file pattern matching, always tools.LevelSafe auto-approve.
+package builtin
 
 import (
 	"context"
@@ -7,26 +7,27 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"nekocode/bot/tools"
 )
 
 type GlobTool struct{}
 
 func (t *GlobTool) Name() string                                       { return "glob" }
-func (t *GlobTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
+func (t *GlobTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeParallel }
 
 func (t *GlobTool) Description() string {
 	return "File pattern matching. ALWAYS use Glob — NEVER invoke find/ls as Bash. Supports ** recursive matching. Returns file paths sorted by modification time."
 }
 
-func (t *GlobTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *GlobTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "pattern", Type: "string", Required: true, Description: "File matching pattern"},
 		{Name: "path", Type: "string", Required: false, Description: "Search directory, default: current directory"},
 	}
 }
 
-func (t *GlobTool) DangerLevel(args map[string]interface{}) DangerLevel {
-	return LevelSafe
+func (t *GlobTool) DangerLevel(args map[string]interface{}) tools.DangerLevel {
+	return tools.LevelSafe
 }
 
 func (t *GlobTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

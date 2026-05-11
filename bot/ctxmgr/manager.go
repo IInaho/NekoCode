@@ -102,17 +102,33 @@ func (m *Manager) LastAssistantHasToolCall() bool {
 }
 
 // Stats returns (messageCount, estimatedTokens, hasSummary).
+// Token count reflects only messages that would be sent to the LLM (after
+// compactBoundary), not the total archived message count.
 func (m *Manager) Stats() (int, int, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return len(m.messages), m.estimatedTokens(), m.summary != ""
+	return len(m.messages), m.visibleEstimatedTokens(), m.summary != ""
 }
 
-// TokenUsage returns (estimatedTokens, budget).
+// visibleEstimatedTokens estimates tokens for the context that Build() would
+// actually send — excludes messages archived behind compactBoundary.
+// Must be called with the lock held.
+func (m *Manager) visibleEstimatedTokens() int {
+	visible := m.messages
+	if m.compactBoundary > 0 && m.summary != "" && m.compactBoundary < len(m.messages) {
+		visible = m.messages[m.compactBoundary:]
+	}
+	if len(visible) > m.windowSize {
+		visible = visible[len(visible)-m.windowSize:]
+	}
+	return estimateTokens(visible) + estimateTokensSystem(m.systemPrompt, m.summary)
+}
+
+// TokenUsage returns (estimatedTokens, budget) for the visible context.
 func (m *Manager) TokenUsage() (int, int) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.estimatedTokens(), m.tokenBudget
+	return m.visibleEstimatedTokens(), m.tokenBudget
 }
 
 // CompactCount returns cumulative tool results cleared by microCompact.
@@ -129,7 +145,11 @@ func (m *Manager) CompactCount() int {
 func (m *Manager) MicroCompactIfNeeded() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.estimatedTokens() < m.tokenBudget/2 {
+	est := m.visibleEstimatedTokens()
+	if t := m.tokenTracker.Total(); t > est {
+		est = t
+	}
+	if est < m.tokenBudget/2 {
 		return 0
 	}
 	return m.microCompact()
@@ -163,6 +183,8 @@ func (m *Manager) FreshStart() {
 	m.snipped = make(map[int]bool)
 	m.compactBoundary = 0
 	m.todoText = ""
+	m.tokenTracker = &TokenTracker{}
+	m.anchor = &Anchor{}
 }
 
 // Build assembles messages for an LLM call.

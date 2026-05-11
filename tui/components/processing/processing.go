@@ -18,6 +18,7 @@ type ProcessingItem struct {
 	sty          *styles.Styles
 	spinnerView  string
 	statusText   string
+	skill        string
 	contentWidth int
 	tokenPrompt  int
 	tokenCompl   int
@@ -37,6 +38,8 @@ type ProcessingItem struct {
 	cachedTodos   string
 	cachedTodosW  int
 }
+
+func (p *ProcessingItem) SetSkill(s string) { p.skill = s; p.invalidate() }
 
 func NewProcessingItem(sty *styles.Styles) *ProcessingItem {
 	return &ProcessingItem{sty: sty, cachedTodosW: -1}

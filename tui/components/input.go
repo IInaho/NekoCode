@@ -137,8 +137,15 @@ func (i *Input) Height() int {
 	return 5 // separator + input + spacer + footer + separator
 }
 
+// Cursor returns the cursor position adjusted to be relative to the top of
+// the Input's rendered view (not relative to the internal textarea).
+// Callers only need to add the Input's absolute Y position in the full layout.
 func (i *Input) Cursor() *tea.Cursor {
-	return i.textarea.Cursor()
+	c := i.textarea.Cursor()
+	if c == nil {
+		return nil
+	}
+	return tea.NewCursor(c.Position.X, 1)
 }
 
 func (i *Input) Update(msg tea.Msg) (*Input, tea.Cmd) {

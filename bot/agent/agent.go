@@ -8,6 +8,7 @@ import (
 
 	"nekocode/bot/ctxmgr"
 	"nekocode/bot/tools"
+	"nekocode/bot/tools/builtin"
 	"nekocode/llm"
 )
 
@@ -58,6 +59,11 @@ type Agent struct {
 	startTime            time.Time
 }
 
+const (
+	defaultMaxIterations = 15
+	steeringChBuffer     = 4
+)
+
 func New(
 	ctx context.Context,
 	ctxMgr *ctxmgr.Manager,
@@ -73,8 +79,8 @@ func New(
 		llmClient:        llmClient,
 		toolRegistry:     toolRegistry,
 		executor:         tools.NewExecutor(toolRegistry),
-		maxIterations:    15,
-		steeringCh:       make(chan string, 4),
+		maxIterations:    defaultMaxIterations,
+		steeringCh:       make(chan string, steeringChBuffer),
 		synthesizePrompt: "Based on the information collected above, provide a final answer. Do NOT call any more tools. Output your conclusion directly.",
 	}
 }
@@ -84,12 +90,12 @@ func (a *Agent) SetPhaseFn(fn tools.PhaseFunc)     { a.phaseFn = fn; a.executor.
 func (a *Agent) PhaseFn() tools.PhaseFunc          { return a.phaseFn }
 func (a *Agent) WireTodoWrite(fn tools.TodoFunc) {
 	if t, err := a.toolRegistry.Get("todo_write"); err == nil {
-		t.(*tools.TodoWriteTool).SetUpdateFn(fn)
+		t.(*builtin.TodoWriteTool).SetUpdateFn(fn)
 	}
 }
 func (a *Agent) WireSnip(fn tools.SnipFunc) {
 	if t, err := a.toolRegistry.Get("snip"); err == nil {
-		t.(*tools.SnipTool).Wire(fn)
+		t.(*builtin.SnipTool).Wire(fn)
 	}
 }
 func (a *Agent) SetShouldStop(fn ShouldStopFunc)           { a.shouldStop = fn }

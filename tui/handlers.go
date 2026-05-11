@@ -1,4 +1,4 @@
-// handlers_keys.go — 按键处理 + 确认键 + 调试日志 + suggestion 辅助。
+// handlers.go — 按键处理 + 完成处理 + spinner tick + 调试日志。
 package tui
 
 import (
@@ -6,8 +6,11 @@ import (
 	"os"
 	"time"
 
+	"nekocode/tui/components/block"
 	"nekocode/tui/components/message"
+	"nekocode/tui/components/processing"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -15,6 +18,8 @@ const (
 	debugLogPath   = "/tmp/nekocode-debug.log"
 	contentMarginV = 2
 )
+
+// --- debug ---
 
 func tuiLog(format string, args ...interface{}) {
 	f, err := os.OpenFile(debugLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -24,6 +29,45 @@ func tuiLog(format string, args ...interface{}) {
 	defer f.Close()
 	fmt.Fprintf(f, "TUI: "+format+"\n", args...)
 }
+
+// --- done ---
+
+func (m *Model) handleDone(msg doneMsg) tea.Cmd {
+	var finalBlocks []block.ContentBlock
+	if msg.err == nil {
+		finalBlocks = block.FilterFinalBlocks(m.Messages.ProcessingBlocks())
+	}
+	m.transitionTo(stateReady)
+
+	if msg.err != nil {
+		m.Messages.AddMessage(message.ChatMessage{
+			Role:    "error",
+			Content: fmt.Sprintf("Error: %v", msg.err),
+		})
+	} else {
+		content := msg.content
+		footer := ""
+		if msg.duration != "" || msg.tokens != "" {
+			footer = "Duration: " + msg.duration
+			if msg.tokens != "" {
+				footer += "  " + msg.tokens
+			}
+		}
+		m.Messages.AddMessage(message.ChatMessage{
+			Role:    "assistant",
+			Content: content,
+			Footer:  footer,
+			Blocks:  finalBlocks,
+		})
+	}
+
+	prompt, compl := m.Bot.TokenUsage()
+	m.Header.SetTokens(prompt + compl)
+	m.Messages.GotoBottom()
+	return nil
+}
+
+// --- keys: confirm ---
 
 func (m *Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -39,6 +83,8 @@ func (m *Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(listenConfirm(m.confirmCh), spinnerTick())
 }
 
+// --- keys: dispatch ---
+
 func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "ctrl+c":
@@ -51,10 +97,18 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 
 	case "up":
-		m.Input.HistoryUp()
+		if m.Suggestions.Visible() {
+			m.Suggestions.Cycle(-1)
+		} else {
+			m.Input.HistoryUp()
+		}
 		return nil
 	case "down":
-		m.Input.HistoryDown()
+		if m.Suggestions.Visible() {
+			m.Suggestions.Cycle(1)
+		} else {
+			m.Input.HistoryDown()
+		}
 		return nil
 
 	case "pgup", "pgdown":
@@ -77,6 +131,7 @@ func (m *Model) handleProcessingKey(msg tea.KeyPressMsg) tea.Cmd {
 		tuiLog("BTW Enter: value=%q len=%d phase=%q", value, len(value), m.processingPhase)
 		if value != "" {
 			m.Suggestions.Hide()
+			m.resizeMessages()
 			m.Input.AddHistory(value)
 			m.Input.Reset()
 			m.Messages.AddMessage(message.ChatMessage{Role: "user", Content: value})
@@ -116,6 +171,11 @@ func (m *Model) handleIdleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.cycleSuggestion(-1)
 		return nil
 	case "esc":
+		if m.Suggestions.Visible() {
+			m.Suggestions.Hide()
+			m.resizeMessages()
+			return nil
+		}
 	case "enter":
 		if m.Suggestions.Visible() {
 			m.acceptSuggestion()
@@ -126,6 +186,7 @@ func (m *Model) handleIdleKey(msg tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		m.Suggestions.Hide()
+		m.resizeMessages()
 		m.Input.AddHistory(value)
 		m.Input.Reset()
 		return m.startChat(value)
@@ -138,17 +199,59 @@ func (m *Model) handleIdleKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
+// --- suggestions ---
+
 func (m *Model) refreshSuggestions() {
 	m.Suggestions.Refresh(m.Input.Value(), m.Bot.CommandNames())
+	m.resizeMessages()
 }
 
 func (m *Model) acceptSuggestion() {
 	if val := m.Suggestions.Accept(); val != "" {
 		m.Input.SetValue(val)
 		m.Input.SetCursorEnd()
+		m.resizeMessages()
 	}
 }
 
 func (m *Model) cycleSuggestion(delta int) {
 	m.Suggestions.Cycle(delta)
+}
+
+// --- spinner ---
+
+func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
+	m.Spinner, _ = m.Spinner.Update(msg)
+
+	if m.state == stateConfirming {
+		m.Messages.SetSpinnerView("")
+		return nil
+	}
+
+	if m.state == stateProcessing {
+		elapsed := time.Since(m.processingStart)
+		statusText := fmt.Sprintf("%s (%.1fs)", m.processingPhase, elapsed.Seconds())
+		prompt, compl := m.Bot.TokenUsage()
+		if prompt == 0 {
+			prompt = m.Bot.ContextTokens()
+		}
+		spinnerView := m.Spinner.View()
+		m.Messages.UpdateProcessing(func(p *processing.ProcessingItem) {
+			p.SetSpinnerView(spinnerView)
+			p.SetStatusText(statusText)
+			p.SetTokens(prompt, compl)
+			p.SetCompactCount(m.Bot.CompactCount())
+		})
+
+		return spinnerTick()
+	}
+
+	return nil
+}
+
+func spinnerTick() tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(100 * time.Millisecond)
+		return spinner.TickMsg{}
+	}
 }

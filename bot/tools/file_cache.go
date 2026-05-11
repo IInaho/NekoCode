@@ -1,7 +1,6 @@
-// file_cache.go — FileStateCache with mtime-based dedup for ReadTool.
-// When the model re-reads a file that hasn't changed since last read, we return
-// a stub instead of the full content. This avoids re-sending unchanged files
-// and mirrors Claude Code's FILE_UNCHANGED_STUB mechanism.
+// file_cache.go — FileStateCache with mtime-based invalidation for ReadTool.
+// Caches file read results to avoid redundant disk I/O. Cache entries are
+// invalidated when the file's mtime or size changes.
 
 package tools
 
@@ -18,12 +17,11 @@ const (
 
 // FileState represents a cached file read result.
 type FileState struct {
-	Content      string
-	Mtime        int64 // from stat
-	Size         int64
-	Offset       int // 1-based start line
-	Limit        int // lines read
-	IsPartial    bool // true if offset>1 or limit<totalLines
+	Content string
+	Mtime   int64 // from stat
+	Size    int64
+	Offset  int // 1-based start line
+	Limit   int // lines read
 }
 
 // FileStateCache is an LRU cache of file read results keyed by normalized path.
@@ -49,8 +47,7 @@ func NewFileStateCache() *FileStateCache {
 }
 
 // Get checks if a file is cached with matching mtime and read range.
-// Returns (content, unchanged). If unchanged is true, the caller should
-// return a stub message instead of the full content.
+// Returns (content, true) on cache hit, ("", false) on miss.
 func (c *FileStateCache) Get(path string, offset, limit int) (string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -71,9 +68,9 @@ func (c *FileStateCache) Get(path string, offset, limit int) (string, bool) {
 		return "", false
 	}
 
-	// Matching range check: if the cached read covered at least as much
-	// as requested (same offset, same or larger limit), it's a full hit.
-	if e.state.IsPartial || offset != e.state.Offset || limit > e.state.Limit {
+	// Matching range check: same offset, cached limit covers requested limit.
+	// Partial reads are valid hits when offset/limit match exactly.
+	if offset != e.state.Offset || limit > e.state.Limit {
 		return "", false
 	}
 
@@ -81,7 +78,7 @@ func (c *FileStateCache) Get(path string, offset, limit int) (string, bool) {
 }
 
 // Put stores a file read result.
-func (c *FileStateCache) Put(path string, content string, offset, limit int, isPartial bool) {
+func (c *FileStateCache) Put(path string, content string, offset, limit int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -92,12 +89,11 @@ func (c *FileStateCache) Put(path string, content string, offset, limit int, isP
 
 	normPath := normalizePath(path)
 	state := FileState{
-		Content:   content,
-		Mtime:     info.ModTime().UnixNano(),
-		Size:      info.Size(),
-		Offset:    offset,
-		Limit:     limit,
-		IsPartial: isPartial,
+		Content: content,
+		Mtime:   info.ModTime().UnixNano(),
+		Size:    info.Size(),
+		Offset:  offset,
+		Limit:   limit,
 	}
 
 	// Update or insert.
@@ -121,10 +117,11 @@ func (c *FileStateCache) Merge(other *FileStateCache) {
 		return
 	}
 	other.mu.RLock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	defer other.mu.RUnlock()
 
 	for path, e := range other.entries {
-		c.mu.Lock()
 		if existing, ok := c.entries[path]; !ok || e.state.Mtime > existing.state.Mtime {
 			if existing != nil {
 				c.totalSize -= len(existing.state.Content)
@@ -134,33 +131,11 @@ func (c *FileStateCache) Merge(other *FileStateCache) {
 			c.order = append(c.order, path)
 			c.totalSize += len(e.state.Content)
 		}
-		c.mu.Unlock()
 	}
 
-	c.mu.Lock()
 	for len(c.entries) > maxCacheEntries || c.totalSize > maxCacheBytes {
 		c.evictOldest()
 	}
-	c.mu.Unlock()
-}
-
-// GetContent retrieves the raw cached content for a path (for post-compact re-creation).
-func (c *FileStateCache) GetContent(path string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	normPath := normalizePath(path)
-	e, ok := c.entries[normPath]
-	if !ok {
-		return "", false
-	}
-
-	info, err := os.Stat(path)
-	if err != nil || info.ModTime().UnixNano() != e.state.Mtime || info.Size() != e.state.Size {
-		return "", false
-	}
-
-	return e.state.Content, true
 }
 
 // Clone returns a shallow copy safe for use by sub-agents.
@@ -199,9 +174,9 @@ func (c *FileStateCache) evictOldest() {
 }
 
 func normalizePath(p string) string {
-	abs, err := filepath.Abs(p)
+	resolved, err := resolvePath(p)
 	if err != nil {
 		return filepath.Clean(p)
 	}
-	return filepath.Clean(abs)
+	return filepath.Clean(resolved)
 }

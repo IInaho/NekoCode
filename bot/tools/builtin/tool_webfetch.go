@@ -1,4 +1,4 @@
-package tools
+package builtin
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"nekocode/bot/tools"
 )
 
 type WebFetchTool struct {
@@ -16,7 +17,7 @@ type WebFetchTool struct {
 }
 
 func NewWebFetchTool() *WebFetchTool {
-	c := NewToolHTTPClient(15 * time.Second)
+	c := tools.NewToolHTTPClient(15 * time.Second)
 	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("too many redirects")
@@ -27,15 +28,15 @@ func NewWebFetchTool() *WebFetchTool {
 }
 
 func (t *WebFetchTool) Name() string                                       { return "web_fetch" }
-func (t *WebFetchTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *WebFetchTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
+func (t *WebFetchTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeParallel }
+func (t *WebFetchTool) DangerLevel(map[string]interface{}) tools.DangerLevel     { return tools.LevelSafe }
 
 func (t *WebFetchTool) Description() string {
 	return "Fetch web page content and convert to text. Useful for reading docs, API references, etc. When quoting fetched content: (1) keep each quote ≤125 characters, (2) always cite the source URL, (3) use quotation marks for exact language — anything outside quotes must not be word-for-word from the source."
 }
 
-func (t *WebFetchTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *WebFetchTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "url", Type: "string", Required: true, Description: "Web page URL to fetch"},
 		{Name: "prompt", Type: "string", Required: false, Description: "Content extraction hint, e.g. 'extract API parameters'"},
 	}
@@ -83,7 +84,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		content = string(body)
 	}
 
-	content = StripAnsi(content)
+	content = tools.StripAnsi(content)
 
 	if content == "" {
 		return "Page content is empty", nil
@@ -93,7 +94,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		content = extractRelevant(content, prompt)
 	}
 
-	content = TruncateByRune(content, 3000)
+	content = tools.TruncateByRune(content, 3000)
 	return content, nil
 }
 

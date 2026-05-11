@@ -1,5 +1,5 @@
 // GrepTool — content search via ripgrep. Returns matching lines with line numbers. Supports regex and context lines.
-package tools
+package builtin
 
 import (
 	"context"
@@ -8,19 +8,20 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"nekocode/bot/tools"
 )
 
 type GrepTool struct{}
 
 func (t *GrepTool) Name() string                                       { return "grep" }
-func (t *GrepTool) ExecutionMode(map[string]interface{}) ExecutionMode { return ModeParallel }
-func (t *GrepTool) DangerLevel(map[string]interface{}) DangerLevel     { return LevelSafe }
+func (t *GrepTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeParallel }
+func (t *GrepTool) DangerLevel(map[string]interface{}) tools.DangerLevel     { return tools.LevelSafe }
 func (t *GrepTool) Description() string {
 	return "Content search via ripgrep. Returns matching lines with line numbers. ALWAYS use Grep — NEVER invoke grep/rg as Bash. Supports full regex syntax (literal braces need escaping). Supports glob filtering, -A/-B/-C context lines, multiline mode."
 }
 
-func (t *GrepTool) Parameters() []Parameter {
-	return []Parameter{
+func (t *GrepTool) Parameters() []tools.Parameter {
+	return []tools.Parameter{
 		{Name: "pattern", Type: "string", Required: true, Description: "Search pattern (regex)"},
 		{Name: "path", Type: "string", Required: false, Description: "Directory to search, default: current directory"},
 		{Name: "glob", Type: "string", Required: false, Description: "File filter pattern, e.g. *.go, *.py"},
@@ -68,5 +69,5 @@ func (t *GrepTool) Execute(ctx context.Context, args map[string]interface{}) (st
 		return "", fmt.Errorf("grep failed: %v\nOutput: %s", err, string(output))
 	}
 
-	return StripAnsi(string(output)), nil
+	return tools.StripAnsi(string(output)), nil
 }

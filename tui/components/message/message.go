@@ -7,6 +7,7 @@ import (
 
 type ChatMessage struct {
 	Role            string
+	Title           string // optional header label (e.g. "/help", "/summarize")
 	Content         string
 	RenderedContent string
 	Blocks          []block.ContentBlock
