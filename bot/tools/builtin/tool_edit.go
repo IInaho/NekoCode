@@ -17,7 +17,23 @@ func (t *EditTool) Name() string                                       { return 
 func (t *EditTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeSequential }
 
 func (t *EditTool) Description() string {
-	return "Precise string replacement. ALWAYS prefer Edit over Write for modifications. MUST Read file first. old_string must match character-for-character (including indentation/newlines) and be unique. Use replace_all=true to replace all occurrences."
+	return `Precise string replacement in existing files. ALWAYS prefer Edit over Write for modifications.
+
+REQUIREMENTS:
+- MUST Read the file first (enforced — the tool will reject edits to unread files).
+- old_string must match character-for-character: indentation, blank lines, trailing spaces, exact surrounding code.
+- old_string must be UNIQUE in the file. Use the SMALLEST old_string that's clearly unique — typically 2-4 lines including surrounding context.
+- Use replace_all for global renames: set replace_all=true to change every instance of old_string.
+
+WHEN THE EDIT FAILS ("string not found"):
+- The error shows the file content with line numbers. Compare your old_string against it byte-by-byte.
+- Common causes: trailing whitespace (invisible in terminal output), tab-vs-space mismatch, surrounding code changed since you last read.
+- Re-read the file with Read, copy the exact text you want to replace, and retry.
+
+WHEN TO USE WRITE INSTEAD:
+- Creating a new file (Write auto-creates parent directories).
+- Replacing the ENTIRE file content in one operation.
+- For any modification to an existing file, Edit is always preferred.`
 }
 
 func (t *EditTool) Parameters() []tools.Parameter {
@@ -55,18 +71,12 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 	}
 	text := string(content)
 
-	idx, pass := findWithFuzzy(text, oldStr)
-	if idx == -1 {
+	start, end, pass := findWithFuzzy(text, oldStr)
+	if start == -1 {
 		return "", fmt.Errorf("string not found in file. File contents (%s):\n%s\nHint: use Read to re-read the file, confirm the exact content before retrying.", filepath.Base(safePath), withLineNumbers(tools.StripAnsi(text)))
 	}
 
-	var replaced string
-	switch pass {
-	case 1: // exact match — use original positions.
-		replaced = text[:idx] + newStr + text[idx+len(oldStr):]
-	default: // fuzzy match — replace the matched segment in-place.
-		replaced = text[:idx] + newStr + text[idx+len(oldStr):]
-	}
+	replaced := text[:start] + newStr + text[end:]
 
 	dir := filepath.Dir(safePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -95,24 +105,24 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]interface{}) (st
 // findWithFuzzy searches for oldStr in text using progressive tolerance.
 // Pass 1: exact match. Pass 2: trim trailing whitespace on each line.
 // Pass 3: trim both leading and trailing whitespace on each line.
-// Returns the byte offset in the original text and the pass number.
-func findWithFuzzy(text, oldStr string) (int, int) {
+// Returns (start, end) byte offsets in the original text and the pass number.
+func findWithFuzzy(text, oldStr string) (int, int, int) {
 	// Pass 1: exact match.
 	if idx := strings.Index(text, oldStr); idx != -1 {
-		return idx, 1
+		return idx, idx + len(oldStr), 1
 	}
 
 	// Pass 2: rstrip each line (tolerate trailing whitespace differences).
-	if idx := fuzzyIndex(text, oldStr, rstripLines); idx != -1 {
-		return idx, 2
+	if start, end := fuzzyIndex(text, oldStr, rstripLines); start != -1 {
+		return start, end, 2
 	}
 
 	// Pass 3: strip each line (tolerate leading+trailing whitespace differences).
-	if idx := fuzzyIndex(text, oldStr, stripLines); idx != -1 {
-		return idx, 3
+	if start, end := fuzzyIndex(text, oldStr, stripLines); start != -1 {
+		return start, end, 3
 	}
 
-	return -1, 0
+	return -1, -1, 0
 }
 
 type lineNorm func(string) string
@@ -134,32 +144,34 @@ func stripLines(s string) string {
 }
 
 // fuzzyIndex searches for oldStr in text after normalizing both with fn.
-// Returns the byte offset in the original text.
-func fuzzyIndex(text, oldStr string, fn lineNorm) int {
+// Returns (start, end) byte offsets in the original text.
+func fuzzyIndex(text, oldStr string, fn lineNorm) (int, int) {
 	normOld := fn(oldStr)
 	normText := fn(text)
 
 	idx := strings.Index(normText, normOld)
 	if idx == -1 {
-		return -1
+		return -1, -1
 	}
 
-	// Map the normalized position back to the original text.
-	// Walk both original and normalized, tracking byte offsets.
+	start := mapNormPosToOrig(text, normText, idx, fn)
+	end := mapNormPosToOrig(text, normText, idx+len(normOld), fn)
+	return start, end
+}
+
+// mapNormPosToOrig maps a byte offset in the normalized text back to the
+// corresponding byte offset in the original text.
+func mapNormPosToOrig(text, normText string, targetNormPos int, fn lineNorm) int {
 	origPos := 0
 	normPos := 0
-	for normPos < idx && origPos < len(text) && normPos < len(normText) {
+	for normPos < targetNormPos && origPos < len(text) && normPos < len(normText) {
 		origLine := lineAt(text, origPos)
 		normLine := fn(origLine)
-		if normPos+len(normLine)+1 <= idx {
+		if normPos+len(normLine)+1 <= targetNormPos {
 			origPos += len(origLine) + 1 // +1 for newline
 			normPos += len(normLine) + 1
 		} else {
-			// Inside the target line.
-			offset := idx - normPos
-			// Scan byte-by-byte within this line. Compare raw bytes
-			// (not fn-wrapped) because fn incorrectly strips mid-line
-			// whitespace when applied to single bytes.
+			offset := targetNormPos - normPos
 			o, n := 0, 0
 			for n < offset && o < len(origLine) {
 				if origLine[o] == normLine[n] {

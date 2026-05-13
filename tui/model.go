@@ -148,19 +148,20 @@ func todoItemsText(items []tools.TodoItem) string {
 		}
 	}
 	if done == len(items) {
-		return ""
+		// All complete — show a compact summary instead of hiding.
+		return fmt.Sprintf("✓ All %d tasks complete", done)
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Tasks %d/%d\n", done, len(items)))
+	b.WriteString(fmt.Sprintf("Tasks %d/%d", done, len(items)))
 	for _, it := range items {
-		icon := "⬜"
+		icon := "·" // · pending
 		switch it.Status {
 		case "in_progress":
-			icon = "🔄"
+			icon = "▸" // ▸ in progress
 		case "completed":
-			icon = "✅"
+			icon = "✓" // ✓ completed
 		}
-		b.WriteString(fmt.Sprintf(" %s %s\n", icon, it.Content))
+		b.WriteString(fmt.Sprintf("\n%s %s", icon, it.Content))
 	}
 	return b.String()
 }

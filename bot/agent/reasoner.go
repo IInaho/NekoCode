@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"nekocode/bot/tools"
 	"nekocode/llm"
@@ -16,7 +17,6 @@ type ActionType int
 const (
 	ActionChat ActionType = iota
 	ActionExecuteTool
-	ActionFinish
 )
 
 const maxTokensCeiling = 64000 // max_tokens limit for finish_reason=length escalation
@@ -31,10 +31,8 @@ type ReasoningResult struct {
 	Thought     string
 	Action      ActionType
 	ActionInput string
-	ToolCallID  string
 	ToolCalls   []ToolCallItem
 	TextContent string
-	IsFinal     bool
 	Interrupted bool // context was canceled mid-stream (steer, not abort)
 }
 
@@ -50,7 +48,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		// content through — e.g., /kami generate a resume is a skill invocation.
 	if strings.HasPrefix(state.Input, "/") && !strings.Contains(state.Input, " ") {
 		return &ReasoningResult{
-			Thought: "User entered a command", Action: ActionFinish, IsFinal: true,
+			Thought: "User entered a command", Action: ActionChat,
 		}
 	}
 
@@ -67,12 +65,12 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		if textContent != "" && !isGarbledToolCall(textContent) {
 			return &ReasoningResult{
 				Thought: "Truncated reply", Action: ActionChat,
-				ActionInput: textContent, IsFinal: true,
+				ActionInput: textContent,
 			}
 		}
 		return &ReasoningResult{
 			Thought: "LLM call failed", Action: ActionChat,
-			ActionInput: fmt.Sprintf("调用失败了，原因：%v。可以再试一次吗？", err), IsFinal: true,
+			ActionInput: fmt.Sprintf("调用失败了，原因：%v。可以再试一次吗？", err),
 		}
 	}
 
@@ -82,7 +80,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		}
 		return &ReasoningResult{
 			Thought: "Direct reply", Action: ActionChat,
-			ActionInput: textContent, IsFinal: true,
+			ActionInput: textContent,
 		}
 	}
 
@@ -91,7 +89,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 		return &ReasoningResult{
 			Thought: "Call tool: " + tc.Name, Action: ActionExecuteTool,
 			ActionInput: tc.Name + ":" + formatArgs(tc.Args),
-			ToolCallID:  tc.ID, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
+			ToolCalls: toolCalls, TextContent: textContent,
 		}
 	}
 
@@ -101,7 +99,7 @@ func (a *Agent) Reason(state *stepState) *ReasoningResult {
 	}
 	return &ReasoningResult{
 		Thought: "Parallel tool calls: " + strings.Join(names, ", "),
-		Action:  ActionExecuteTool, ToolCalls: toolCalls, TextContent: textContent, IsFinal: false,
+		Action:  ActionExecuteTool, ToolCalls: toolCalls, TextContent: textContent,
 	}
 }
 
@@ -111,8 +109,7 @@ func (a ActionType) String() string {
 		return "chat"
 	case ActionExecuteTool:
 		return "execute_tool"
-	case ActionFinish:
-		return "finish"
+
 	default:
 		return "unknown"
 	}
@@ -161,11 +158,11 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 		}
 
 		finishReason := ""
-		phaseWaiting := true
 		phaseThink := true
+		firstReasoning := true
 		for token := range tokenCh {
-			if phaseWaiting && token.ReasoningContent != "" {
-				phaseWaiting = false
+			if firstReasoning && token.ReasoningContent != "" {
+				firstReasoning = false
 				if a.phaseFn != nil {
 					a.phaseFn(tools.PhaseThinking)
 				}
@@ -246,14 +243,6 @@ func (a *Agent) callLLMForTool() ([]ToolCallItem, string, error) {
 			return fmt.Errorf("output limit still hit at %d, retrying with thinking disabled", maxTokensCeiling)
 		}
 
-		// If the stream ended with length and we exhausted all retries,
-		// surface partial text for display but signal an error so the
-		// caller knows the response is incomplete.
-		if finishReason == "length" && len(tcAccum) == 0 {
-			textContent = tools.StripAnsi(textBuf.String())
-			return fmt.Errorf("output truncated at %d tokens", a.llmClient.MaxTokens())
-		}
-
 		select {
 		case err := <-errCh:
 			if err != nil {
@@ -319,9 +308,10 @@ func isGarbledToolCall(text string) bool {
 	if t == "" {
 		return false
 	}
-	// Raw XML invoke pattern leaked into text output.
+	// Raw XML invoke/tool_call pattern leaked into text output.
 	if strings.Contains(t, "<invoke") || strings.Contains(t, "</invoke") ||
-		strings.Contains(t, "<parameter") || strings.Contains(t, "</parameter") {
+		strings.Contains(t, "<parameter") || strings.Contains(t, "</parameter") ||
+		strings.Contains(t, "<tool_call") || strings.Contains(t, "</tool_call") {
 		return true
 	}
 	// Raw JSON tool_call pattern.
@@ -338,6 +328,22 @@ type toolAccum struct {
 }
 
 func (a *Agent) forceSynthesize() string {
+	text := a.trySynthesize()
+	if text != "" {
+		return text
+	}
+	// Emergency fallback: all retries exhausted with no output.
+	// Try one last time with aggressively compacted context.
+	writeAgentLog("forceSynthesize: primary path failed, attempting emergency fallback")
+	if fb := a.emergencySynthesize(); fb != "" {
+		return fb
+	}
+	return "Unable to generate summary"
+}
+
+// trySynthesize attempts to get a final summary from the LLM with full context.
+// Returns empty string on failure after all retries.
+func (a *Agent) trySynthesize() string {
 	var text string
 	firstAttempt := true
 	savedMaxTokens := a.llmClient.MaxTokens()
@@ -371,14 +377,7 @@ func (a *Agent) forceSynthesize() string {
 		}
 
 		finishReason := ""
-		firstToken := true
 		for token := range tokenCh {
-			if firstToken && token.Content != "" {
-				firstToken = false
-				if a.phaseFn != nil {
-					a.phaseFn(tools.PhaseReasoning)
-				}
-			}
 			if token.Content != "" {
 				textBuf.WriteString(token.Content)
 				if a.streamFn != nil {
@@ -396,7 +395,7 @@ func (a *Agent) forceSynthesize() string {
 			}
 		}
 
-		// Same two-tier escalation as callLLMForTool.
+		// Two-tier escalation for finish_reason=length.
 		if finishReason == "length" {
 			if a.llmClient.MaxTokens() < maxTokensCeiling {
 				writeAgentLog("forceSynthesize: finish_reason=length, escalating max_tokens %d→%d", a.llmClient.MaxTokens(), maxTokensCeiling)
@@ -419,22 +418,58 @@ func (a *Agent) forceSynthesize() string {
 		text = tools.StripAnsi(textBuf.String())
 		return nil
 	})
-	// Restore original state — escalations are per-call tactics, not permanent.
 	a.llmClient.SetMaxTokens(savedMaxTokens)
 	if thinkingDisabled {
 		a.llmClient.SetDisableThinking(false)
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return "Interrupted"
+			return ""
 		}
 		if text != "" && !isGarbledToolCall(text) {
 			return text
 		}
-		return "Information collected but summarization failed"
+		return ""
 	}
-	if text != "" {
-		return text
+	return text
+}
+
+// emergencySynthesize is a last-resort attempt with minimal context.
+// No retries — if this fails, we surface the error to the user.
+func (a *Agent) emergencySynthesize() string {
+	// Aggressively compact: clear ALL old tool results, force summarize.
+	a.ctxMgr.MicroCompactIfNeeded()
+	a.ctxMgr.ForceCompact()
+	// Build minimal context: system prompt + anchor + last 3 user turns + prompt.
+	msgs := a.ctxMgr.BuildMinimal()
+	msgs = append(msgs, llm.Message{
+		Role: "user", Content: a.synthesizePrompt,
+	})
+
+	ctx, cancel := context.WithTimeout(a.getCtx(), 30*time.Second)
+	defer cancel()
+
+	tokenCh, errCh := a.llmClient.ChatStream(ctx, msgs, nil)
+	if tokenCh == nil {
+		return ""
 	}
-	return "Unable to generate summary"
+
+	var textBuf strings.Builder
+	for token := range tokenCh {
+		if token.Content != "" {
+			textBuf.WriteString(token.Content)
+			if a.streamFn != nil {
+				a.streamFn(token.Content, false)
+			}
+		}
+	}
+	select {
+	case <-errCh:
+	default:
+	}
+	text := tools.StripAnsi(textBuf.String())
+	if isGarbledToolCall(text) {
+		return ""
+	}
+	return text
 }

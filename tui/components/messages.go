@@ -43,6 +43,9 @@ func (m *Messages) SetProcessing(on bool) {
 	if on && m.processingItem == nil {
 		m.processingItem = processing.NewProcessingItem(m.sty)
 		m.AppendItems(m.processingItem)
+		if m.Follow {
+			m.ScrollToBottom()
+		}
 	} else if !on && m.processingItem != nil {
 		items := m.Items()
 		m.SetItems()
@@ -188,6 +191,9 @@ func (m *Messages) invalidateProcessing() {
 	if idx >= 0 {
 		m.InvalidateItem(idx)
 	}
+	if m.Follow {
+		m.ScrollToBottom()
+	}
 }
 
 func (m *Messages) AddMessage(msg message.ChatMessage) {
@@ -316,10 +322,12 @@ func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 		switch msg.String() {
 		case "up":
 			m.ScrollBy(-1)
+			if m.Processing { m.SetFollow(false) }
 		case "down":
 			m.ScrollBy(1)
 		case "pgup":
 			m.ScrollBy(-m.Height())
+			if m.Processing { m.SetFollow(false) }
 		case "pgdown":
 			m.ScrollBy(m.Height())
 		}
@@ -327,6 +335,7 @@ func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 		switch mev := msg.Mouse(); mev.Button {
 		case tea.MouseWheelUp:
 			m.ScrollBy(-3)
+			if m.Processing { m.SetFollow(false) }
 		case tea.MouseWheelDown:
 			m.ScrollBy(3)
 		}
@@ -334,9 +343,11 @@ func (m *Messages) Update(msg tea.Msg) (*Messages, tea.Cmd) {
 
 	if m.AtBottom() {
 		m.SetFollow(true)
-	} else {
+	} else if !m.Processing {
 		m.SetFollow(false)
 	}
+	// During processing: if user scrolled away, preserve their choice.
+	// If they scroll back to bottom (AtBottom), re-enable follow.
 
 	return m, nil
 }

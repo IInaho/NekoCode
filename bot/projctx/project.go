@@ -1,9 +1,9 @@
-// context/project.go — project context preloading.
+// project.go — project context preloading (NEKOCODE.md discovery and loading).
 // Discovers and loads NEKOCODE.md files at session start.
 // This eliminates repeated glob/grep/read exploration at the
 // start of every conversation.
 
-package context
+package projctx
 
 import (
 	"os"

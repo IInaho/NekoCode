@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	_ "embed"
 	"nekocode/bot/agent"
 	"nekocode/bot/agent/subagent"
 	"nekocode/bot/command"
 	"nekocode/bot/config"
-	bctx "nekocode/bot/context"
+	"nekocode/bot/projctx"
 	"nekocode/bot/ctxmgr"
+	"nekocode/bot/prompt"
 	"nekocode/bot/session"
 	"nekocode/bot/skill"
 	"nekocode/bot/skill/bundled"
@@ -24,63 +24,56 @@ import (
 )
 
 type Bot struct {
-	cfg        *config.Config
-	ctxMgr     *ctxmgr.Manager
-	cmdParser  *command.Parser
-	ag         *agent.Agent
-	sessMem    *session.Memory
-	extractor  *session.Extractor
+	cfg           *config.Config
+	ctxMgr        *ctxmgr.Manager
+	cmdParser     *command.Parser
+	ag            *agent.Agent
+	sessMem       *session.Memory
 	skillReg      *skill.Registry
+	promptBuilder *prompt.Builder
 	skillHint     string // skill activation hint for the TUI
 	wantsAgent    bool   // true if the last command should continue to agent
 	skillMsgStart int    // index of first skill message in ctxMgr, -1 if none
 	skillMsgEnd   int    // index after last skill message
+	toolRegistry  *tools.Registry
 }
-
-//go:embed prompt/system.md
-var SystemPrompt string
 
 func New() *Bot {
 	ctx := context.Background()
 
 	cfg, _ := config.Load()
 
-	systemPrompt := SystemPrompt
+	promptBuilder := prompt.NewBuilder(cfg.Provider)
+
+	// Register environment info as a cached system prompt section.
+	// Stays stable across turns — only changes on cd or date change.
+	// Having it in the system prompt (not a user message) keeps it
+	// out of summarization and preserves prompt cache stability.
+	if cwd, err := os.Getwd(); err == nil {
+		now := time.Now().Format("2006-01-02")
+		envSection := prompt.CachedSection(func() string {
+			return fmt.Sprintf("<env>\nWorking directory: %s\nToday: %s\n</env>", cwd, now)
+		})
+		promptBuilder.AddCachedSection(envSection)
+	}
+
+	systemPrompt := promptBuilder.Build()
 
 	ctxMgr := ctxmgr.New(systemPrompt)
 
-	// Inject environment as <system-reminder> user message (not system prompt)
-	// so the system prompt stays lean for prompt caching.
+	// Preload project context (NEKOCODE.md files) to avoid repeated
+	// glob/grep/read exploration at the start of every conversation.
+	// Environment info (CWD, date) is already in the cached system section.
+	var projCtx string
 	if cwd, err := os.Getwd(); err == nil {
-		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\nWorking directory: %s\nToday's date is %s. Use this for web searches and file timestamps.\nUse list/glob to explore, read when needed.\n</system-reminder>", cwd, time.Now().Format("2006-01-02")))
-
-		// Preload project context (NEKOCODE.md files) to avoid repeated
-		// glob/grep/read exploration at the start of every conversation.
-		if projCtx := bctx.LoadProjectContext(cwd); projCtx != "" {
+		projCtx = projctx.LoadProjectContext(cwd)
+		if projCtx != "" {
 			ctxMgr.Add("system", projCtx)
 		}
-	} else {
-		ctxMgr.Add("user", fmt.Sprintf("<system-reminder>\nToday's date is %s.\n</system-reminder>", time.Now().Format("2006-01-02")))
 	}
 	ctxMgr.SetTokenBudget(cfg.TokenBudget)
 
-	var llmClient llm.LLM
-	switch cfg.Provider {
-	case "anthropic":
-		c := llm.NewAnthropic(cfg.APIKey, cfg.Model)
-		// Separate thinking budget from output budget so reasoning
-		// doesn't consume output tokens (OpenCode pattern).
-		c.SetThinkingBudget(cfg.ThinkingBudget)
-		llmClient = c
-	case "glm":
-		c := llm.NewGLM(cfg.APIKey, cfg.BaseURL, cfg.Model)
-		c.SetDisableThinking(true) // DeepSeek auto-max can't be controlled, disable by default
-		llmClient = c
-	default:
-		c := llm.NewOpenAI(cfg.APIKey, cfg.BaseURL, cfg.Model)
-		c.SetDisableThinking(true) // DeepSeek auto-max can't be controlled, disable by default
-		llmClient = c
-	}
+	llmClient := llm.NewClient(cfg.Provider, cfg.APIKey, cfg.BaseURL, cfg.Model, cfg.ThinkingBudget)
 
 	ctxMgr.SetSummarizer(func(msgs []llm.Message, prevSummary string) (string, error) {
 		prompt := ctxmgr.BuildPrompt(msgs, prevSummary)
@@ -118,39 +111,40 @@ func New() *Bot {
 			fmt.Fprintf(os.Stderr, "session memory: %v — running without session persistence\n", err)
 		}
 	}
-	sessExt := session.NewExtractor(llmClient)
 
 	b := &Bot{
-		cfg:       cfg,
-		ctxMgr:    ctxMgr,
-		cmdParser: cmdParser,
-		ag:        agent.New(ctx, ctxMgr, llmClient, toolRegistry),
-		sessMem:   sessMem,
-		extractor: sessExt,
-		skillReg:  skillReg,
+		toolRegistry:  toolRegistry,
+		cfg:           cfg,
+		ctxMgr:        ctxMgr,
+		cmdParser:     cmdParser,
+		ag:            agent.New(ctx, ctxMgr, llmClient, toolRegistry),
+		sessMem:       sessMem,
+		skillReg:      skillReg,
+		promptBuilder: promptBuilder,
 		skillMsgStart: -1,
 	}
 
 	// Sub-agent engine uses a separate LLM client with thinking disabled.
 	// Sub-agents execute — they don't need extended reasoning.
-	subLLM := cloneLLM(llmClient, cfg)
-	subLLM.SetDisableThinking(true)
+	subLLM := llm.Clone(cfg.Provider, cfg.APIKey, cfg.BaseURL, cfg.Model, cfg.ThinkingBudget)
 	engine := subagent.NewEngine(subLLM, toolRegistry)
 	names := make([]string, 0)
 	for _, a := range subagent.List() {
 		names = append(names, a.Name)
 	}
 	if t, err := toolRegistry.Get("task"); err == nil {
-		t.(*builtin.TaskTool).Wire(func(ctx context.Context, prompt, agentType string) (string, error) {
+		t.(*builtin.TaskTool).Wire(func(ctx context.Context, prompt, agentType, thoroughness string) (*subagent.Result, error) {
 			at, ok := subagent.Get(agentType)
 			if !ok {
-				return "", fmt.Errorf("unknown sub-agent type: %s (available: %s)", agentType, strings.Join(names, ", "))
+				return nil, fmt.Errorf("unknown sub-agent type: %s (available: %s)", agentType, strings.Join(names, ", "))
 			}
 			cwd, _ := os.Getwd()
 			cfg := subagent.RunConfig{
 				Prompt:          prompt,
 				AgentType:       at,
 				Cwd:             cwd,
+				ProjectContext:  projCtx,
+				Thoroughness:    thoroughness,
 				DisableThinking: true, // subagents execute, don't ponder
 			}
 			if fn := b.ag.PhaseFn(); fn != nil {
@@ -161,9 +155,19 @@ func New() *Bot {
 		}, names)
 	}
 
-	// Circuit breaker: force synthesis when searching without fetching.
+	// Search circuit breaker: searching heavily without fetching may mean
+	// the model is hallucinating. Inject a prompt first at threshold 4;
+	// only force-stop at threshold 8.
+	lastSearchPromptStep := 0
 	b.ag.SetShouldStop(func(info agent.StopInfo) bool {
-		return info.State.SearchCount >= 4 && info.State.FetchCount == 0
+		if info.State.SearchCount >= 8 && info.State.FetchCount == 0 {
+			return true
+		}
+		if info.State.SearchCount >= 4 && info.State.FetchCount == 0 && info.Step > lastSearchPromptStep+1 {
+			lastSearchPromptStep = info.Step
+			b.ctxMgr.Add("user", "[System] You've done "+strconv.Itoa(info.State.SearchCount)+" web searches without fetching any results. If the search snippets are sufficient, summarize findings. Otherwise, use web_fetch to get full content from the most relevant results.")
+		}
+		return false
 	})
 
 	// Prompt the agent to make progress when accumulating many tool results.
@@ -175,7 +179,7 @@ func New() *Bot {
 				toolResults++
 			}
 		}
-		if toolResults > 20 {
+		if toolResults > 40 {
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
 				Content: "[System] " + strconv.Itoa(toolResults) + " tool results accumulated. Check for unfinished sub-tasks — if any, continue with task. If all done, call task(verify) to validate, then report results.",
@@ -184,56 +188,9 @@ func New() *Bot {
 		return msgs
 	})
 
-	callbacks := &command.Callbacks{
-		ClearHistory:   ctxMgr.Clear,
-		GetConfig:      func() string { return fmt.Sprintf("%s/%s", cfg.Provider, cfg.Model) },
-		ForceSummarize: func() (string, error) { return b.ForceSummarize() },
-		ContextStats:   func() string { return b.ContextStats() },
-		FreshStart:     func() (string, error) { return b.ForceFreshStart() },
-	}
-	command.RegisterDefaults(b.cmdParser, callbacks)
+		b.registerCustomCommands()
 
-	// Register each skill as a slash command (/skill-name).
-	for _, sk := range skillReg.List() {
-		name := sk.Name
-		b.cmdParser.Register(name, func(cmd *command.Command) (string, bool) {
-			sk, ok := skillReg.Get(name)
-			if !ok {
-				return fmt.Sprintf("Skill %q not found.", name), true
-			}
-			// Track skill message range so we can snip them when
-			// the next turn doesn't need this skill.
-			b.skillMsgStart = ctxMgr.Len()
-			ctxMgr.Add("user", skill.FormatForContext(sk))
-			skillReg.MarkLoaded(name)
-			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), cfg.TokenBudget))
-
-			if len(cmd.Args) == 0 {
-				b.skillMsgStart = -1
-				return fmt.Sprintf("Loaded skill %q. Type your request to use it.", name), true
-			}
-
-			// Has arguments: inject clean prompt, set skill hint, start agent.
-			ctxMgr.Add("user", strings.Join(cmd.Args, " "))
-			b.skillMsgEnd = ctxMgr.Len()
-			b.skillHint = name
-			b.wantsAgent = true
-			return "", false
-		})
-	}
-
-	// Wire skill tool OnLoad so model-loaded skills are marked and excluded.
-	if t, err := toolRegistry.Get("skill"); err == nil {
-		t.(*skill.SkillTool).SetOnLoad(func(name string) {
-			skillReg.MarkLoaded(name)
-			ctxMgr.SetSkillList(skill.BuildSkillListText(skillReg.List(), skillReg.LoadedSet(), cfg.TokenBudget))
-		})
-	}
-
-	// Wire snip tool so the model can proactively prune history.
-	b.WireSnip()
-
-	return b
+		return b
 }
 
 // Public API
@@ -250,17 +207,6 @@ func (b *Bot) ExecuteCommand(input string) (string, bool) {
 		return "", false
 	}
 	return b.cmdParser.Execute(cmd)
-}
-
-// clearSkillContext removes skill messages from the previous turn so they
-// don't consume context tokens when the current turn doesn't need the skill.
-func (b *Bot) clearSkillContext() {
-	if b.skillMsgStart < 0 || b.skillMsgEnd <= b.skillMsgStart {
-		return
-	}
-	b.ctxMgr.Snip(b.skillMsgStart, b.skillMsgEnd-1)
-	b.skillMsgStart = -1
-	b.skillMsgEnd = 0
 }
 
 // SkillHint returns the skill activation hint and whether the agent should
@@ -280,6 +226,9 @@ func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, tool
 	}
 
 	result := b.ag.Run(input, onStep)
+	b.ag.SetPlanMode(false) // plan mode is single-turn only
+	// Restore default system prompt after exiting plan mode.
+	b.ctxMgr.SetSystemPrompt(b.promptBuilder.Build())
 	b.SummarizeIfNeeded()
 
 	// Update goal from session memory after each turn.
@@ -290,13 +239,6 @@ func (b *Bot) RunAgent(input string, onStep func(step int, thought, action, tool
 			}
 		}
 
-		// Trigger async session memory extraction if thresholds are met.
-		_, tokens, _ := b.ctxMgr.Stats()
-		toolCount := b.ctxMgr.ToolResultCount()
-		hasToolCall := b.ctxMgr.LastAssistantHasToolCall()
-		if b.sessMem.ShouldExtract(tokens, toolCount, hasToolCall, session.DefaultExtractConfig) {
-			b.extractor.RunAsync(b.sessMem, b.ctxMgr, nil)
-		}
 	}
 
 	return result.FinalOutput, result.Error
@@ -320,65 +262,11 @@ func (b *Bot) WireTodoWrite(fn tools.TodoFunc) {
 	b.ag.WireTodoWrite(fn)
 }
 
-func (b *Bot) WireSnip() {
-	b.ag.WireSnip(func(startIdx, endIdx int) string {
-		return b.ctxMgr.Snip(startIdx, endIdx)
-	})
-}
-
 func (b *Bot) SetPhaseFn(fn tools.PhaseFunc) {
 	b.ag.SetPhaseFn(fn)
 }
 
 func (b *Bot) SetCtxTodos(text string) { b.ctxMgr.SetTodos(text) }
-
-func (b *Bot) SummarizeIfNeeded() {
-	if !b.ctxMgr.NeedsSummarization() {
-		return
-	}
-
-	// Try session memory first (free, no API call).
-	if b.sessMem != nil {
-		if content := b.sessMem.ReadContent(); b.sessMem.HasSubstance() && len(content) > 100 {
-			_ = b.ctxMgr.SummarizeWithSessionMemory(content)
-			return
-		}
-	}
-
-	// Fall back to LLM summarizer.
-	_ = b.ctxMgr.Summarize()
-}
-
-func (b *Bot) ForceSummarize() (string, error) {
-	count, tokens, hadSummary := b.ctxMgr.Stats()
-	if count <= 2 {
-		return "Conversation too short, nothing to compact.", nil
-	}
-	if !b.ctxMgr.NeedsSummarization() {
-		return fmt.Sprintf("Not needed: %d messages, ~%d tokens — well under budget", count, tokens), nil
-	}
-	if err := b.ctxMgr.Summarize(); err != nil {
-		return "", err
-	}
-	_, newTokens, _ := b.ctxMgr.Stats()
-	if newTokens >= tokens {
-		return fmt.Sprintf("Already compact: %d messages, ~%d tokens — nothing to compress", count, tokens), nil
-	}
-	action := "Compacted"
-	if hadSummary {
-		action = "Summary updated"
-	}
-	return fmt.Sprintf("%s: %d messages, ~%d → ~%d tokens", action, count, tokens, newTokens), nil
-}
-
-func (b *Bot) ContextStats() string {
-	count, tokens, hasSummary := b.ctxMgr.Stats()
-	summary := "none"
-	if hasSummary {
-		summary = "yes"
-	}
-	return fmt.Sprintf("Messages: %d, ~%d tokens, summary: %s", count, tokens, summary)
-}
 
 func (b *Bot) TokenUsage() (prompt, completion int) {
 	return b.ag.TokenUsage()
@@ -407,70 +295,14 @@ func (b *Bot) CommandNames() []string {
 	return b.cmdParser.Commands()
 }
 
-// ForceFreshStart summarizes the current conversation (if enough content) then
-// clears all messages, keeping the summary for future context.
-// Creates a new session memory file so old context doesn't leak.
-func (b *Bot) ForceFreshStart() (string, error) {
-	count, oldTokens, _ := b.ctxMgr.Stats()
-	b.skillReg.ClearLoaded()
-	b.ctxMgr.SetSkillList(skill.BuildSkillListText(b.skillReg.List(), nil, b.cfg.TokenBudget))
-
-	// Snapshot old session content before creating a new one.
-	oldSessContent := ""
-	oldSessHadSubstance := false
-	if b.sessMem != nil {
-		oldSessContent = b.sessMem.ReadContent()
-		oldSessHadSubstance = b.sessMem.HasSubstance()
-	}
-
-	// Create a new session memory file for the new conversation.
-	newSessID := fmt.Sprintf("session-%d", time.Now().Unix())
-	newSess, err := session.New(newSessID, "")
-	if err != nil {
-		newSess = nil
-	}
-	b.sessMem = newSess
-
-	if count <= 2 {
-		b.ctxMgr.FreshStart()
-		return fmt.Sprintf("New session %s started.", newSessID), nil
-	}
-
-	// Use old session memory as summary if available (free, no API call).
-	if oldSessHadSubstance && oldSessContent != "" {
-		b.ctxMgr.SetSummary(oldSessContent)
-		b.ctxMgr.FreshStart()
-		_, newTokens, _ := b.ctxMgr.Stats()
-		return fmt.Sprintf("New session %s. %d messages, ~%d tokens → session memory (~%d tokens)", newSessID, count, oldTokens, newTokens), nil
-	}
-
-	// Fall back to API summarizer.
-	if b.ctxMgr.NeedsSummarization() {
-		if err := b.ctxMgr.Summarize(); err != nil {
-			return "", err
+func estimateToolDefTokens(descs []tools.Descriptor) int {
+	n := 0
+	for _, d := range descs {
+		n += len(d.Name) + len(d.Description) + 80
+		for _, p := range d.Parameters {
+			n += len(p.Name) + len(p.Description) + len(p.Type) + 20
 		}
 	}
-	b.ctxMgr.FreshStart()
-	_, newTokens, hasSummary := b.ctxMgr.Stats()
-	detail := "no summary"
-	if hasSummary {
-		detail = "with summary"
-	}
-	return fmt.Sprintf("New session %s. %d messages, ~%d tokens → %s (~%d tokens)", newSessID, count, oldTokens, detail, newTokens), nil
+	return n / 4
 }
 
-// cloneLLM creates a copy of the LLM client with the same provider/model config.
-func cloneLLM(client llm.LLM, cfg *config.Config) llm.LLM {
-	switch cfg.Provider {
-	case "anthropic":
-		c := llm.NewAnthropic(cfg.APIKey, cfg.Model)
-		c.SetBaseURL(cfg.BaseURL)
-		return c
-	case "glm":
-		c := llm.NewGLM(cfg.APIKey, cfg.BaseURL, cfg.Model)
-		return c
-	default:
-		c := llm.NewOpenAI(cfg.APIKey, cfg.BaseURL, cfg.Model)
-		return c
-	}
-}

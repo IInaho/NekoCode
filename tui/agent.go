@@ -25,8 +25,6 @@ func logPanic(r any) {
 func (m *Model) startChat(value string) tea.Cmd {
 	resp, ok := m.Bot.ExecuteCommand(value)
 	if ok && resp != "" {
-		// Command output is plain text — bypass markdown rendering
-		// to avoid HTML tag stripping and paragraph spacing.
 		m.Messages.AddMessage(message.ChatMessage{
 			Role: "system", Title: value, Content: resp, RenderedContent: resp,
 		})

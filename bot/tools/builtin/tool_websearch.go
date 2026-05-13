@@ -29,8 +29,13 @@ func (t *WebSearchTool) DangerLevel(map[string]interface{}) tools.DangerLevel   
 func (t *WebSearchTool) Description() string {
 	return fmt.Sprintf(
 		`Search the web for latest information. Set result count (default 8, max 15).
-Tip: include the current year (%d) in your query for more accurate results.
-CRITICAL: After using search results, include a "Sources:" section listing every referenced URL as a markdown hyperlink — [Title](URL). This is MANDATORY.`,
+
+CRITICAL REQUIREMENT — you MUST follow this:
+- After answering the user, include a "Sources:" section at the end of your response.
+- In the Sources section, list all relevant URLs from the search results as markdown hyperlinks: [Title](URL).
+- This is MANDATORY — never skip including sources in your response.
+
+Tip: include the current year (%d) in your query for more accurate results.`,
 		time.Now().Year(),
 	)
 }

@@ -19,6 +19,15 @@ var SharedHTTPClientTimeout = &http.Client{
 	Timeout:   120 * time.Second,
 }
 
+// SharedHTTPStreamClient is used for streaming requests. The timeout is intentionally
+// long (10 min) — streaming responses can take minutes of token generation.
+// The client-level timeout provides a safety net against server-side hangs
+// that would otherwise cause goroutine leaks (the caller's context may not have a deadline).
+var SharedHTTPStreamClient = &http.Client{
+	Transport: sharedTransport,
+	Timeout:   10 * time.Minute,
+}
+
 type Message struct {
 	Role             string     `json:"role"`
 	Content          string     `json:"content,omitempty"`
@@ -88,8 +97,10 @@ type ToolCallDelta struct {
 }
 
 type StreamUsage struct {
-	PromptTokens     int
-	CompletionTokens int
+	PromptTokens            int
+	CompletionTokens        int
+	CacheCreationInputTokens int // tokens written to prompt cache (new entries)
+	CacheReadInputTokens    int // tokens read from prompt cache (cache hits)
 }
 
 type ToolDef struct {

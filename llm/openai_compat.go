@@ -24,8 +24,25 @@ func (c *OpenAICompatible) SetMaxTokens(n int)              { c.maxTokens = n }
 func (c *OpenAICompatible) MaxTokens() int                   { return c.maxTokens }
 func (c *OpenAICompatible) SetDisableThinking(disable bool) { c.disableThinking = disable }
 func (c *OpenAICompatible) SetThinkingBudget(tokens int) {
-	// DeepSeek doesn't support thinking budget — only on/off + reasoning_effort.
-	c.disableThinking = tokens < 0
+	// Map Anthropic-style token budgets to OpenAI-compat reasoning_effort levels.
+	// This way callers can use SetThinkingBudget generically without provider awareness.
+	if tokens < 0 {
+		c.disableThinking = true
+		c.reasoningEffort = ""
+	} else if tokens == 0 {
+		c.disableThinking = false
+		c.reasoningEffort = "" // let the API use its default
+	} else {
+		c.disableThinking = false
+		switch {
+		case tokens <= 4000:
+			c.reasoningEffort = "low"
+		case tokens <= 8000:
+			c.reasoningEffort = "high"
+		default:
+			c.reasoningEffort = "max"
+		}
+	}
 }
 func (c *OpenAICompatible) SetReasoningEffort(effort string) { c.reasoningEffort = effort }
 
@@ -128,18 +145,22 @@ func (c *OpenAICompatible) ChatStream(ctx context.Context, messages []Message, t
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
+		tokenChan := make(chan StreamToken)
 		errChan := make(chan error, 1)
 		errChan <- err
-		return nil, errChan
+		close(tokenChan)
+		return tokenChan, errChan
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
 
-	resp, err := SharedHTTPClient.Do(req)
+	resp, err := SharedHTTPStreamClient.Do(req)
 	if err != nil {
+		tokenChan := make(chan StreamToken)
 		errChan := make(chan error, 1)
 		errChan <- err
-		return nil, errChan
+		close(tokenChan)
+		return tokenChan, errChan
 	}
 
 	tokenChan := make(chan StreamToken)

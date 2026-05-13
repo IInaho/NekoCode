@@ -27,9 +27,9 @@ type FileState struct {
 // FileStateCache is an LRU cache of file read results keyed by normalized path.
 // Safe for concurrent use.
 type FileStateCache struct {
-	mu       sync.RWMutex
-	entries  map[string]*cacheEntry
-	order    []string // LRU order, most recent at end
+	mu        sync.RWMutex
+	entries   map[string]*cacheEntry
+	order     []string // LRU order, most recent at end
 	totalSize int
 }
 
@@ -108,6 +108,18 @@ func (c *FileStateCache) Put(path string, content string, offset, limit int) {
 	// Evict oldest entries until within limits.
 	for (len(c.entries) > maxCacheEntries || c.totalSize > maxCacheBytes) && len(c.order) > 0 {
 		c.evictOldest()
+	}
+}
+
+// Invalidate removes a file from the cache. Called when a file is modified.
+func (c *FileStateCache) Invalidate(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	normPath := normalizePath(path)
+	if e, ok := c.entries[normPath]; ok {
+		c.totalSize -= len(e.state.Content)
+		delete(c.entries, normPath)
+		c.removeFromOrder(normPath)
 	}
 }
 

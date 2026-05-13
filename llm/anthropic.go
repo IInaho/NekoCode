@@ -21,10 +21,13 @@ type Anthropic struct {
 	temperature     float64
 }
 
-func NewAnthropic(apiKey, model string) *Anthropic {
+func NewAnthropic(apiKey, baseURL, model string) *Anthropic {
+	if baseURL == "" {
+		baseURL = "https://api.anthropic.com/v1"
+	}
 	return &Anthropic{
 		APIKey:       apiKey,
-		BaseURL:      "https://api.anthropic.com/v1",
+		BaseURL:      baseURL,
 		Model:        model,
 		maxTokens:    32000,
 		temperature:  0.7,
@@ -39,6 +42,8 @@ func (a *Anthropic) MaxTokens() int            { return a.maxTokens }
 func (a *Anthropic) SetDisableThinking(disable bool) {
 	if disable {
 		a.thinkingType = "disabled"
+	} else if a.thinkingBudget > 0 {
+		a.thinkingType = "enabled"
 	} else {
 		a.thinkingType = "adaptive"
 	}
@@ -52,29 +57,51 @@ func (a *Anthropic) SetThinkingBudget(tokens int) {
 	}
 	// tokens == 0: keep default (adaptive)
 }
-func (a *Anthropic) SetReasoningEffort(string) {} // not used by Anthropic
+func (a *Anthropic) SetReasoningEffort(effort string) {
+	// Translate OpenAI-compat effort levels to Anthropic thinking config.
+	switch effort {
+	case "max":
+		a.thinkingType = "enabled"
+		a.thinkingBudget = 16000
+	case "high":
+		a.thinkingType = "enabled"
+		a.thinkingBudget = 8000
+	case "low":
+		a.thinkingType = "disabled"
+	default:
+		// "" or "medium" / unknown — use adaptive (let model decide).
+		a.thinkingType = "adaptive"
+		a.thinkingBudget = 0
+	}
+}
+
+type cacheControl struct {
+	Type string `json:"type"`
+}
 
 type anthropicTool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  interface{}     `json:"input_schema"`
+	CacheControl *cacheControl   `json:"cache_control,omitempty"`
 }
 
 type anthropicContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   string          `json:"content,omitempty"`
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	ID           string          `json:"id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Input        json.RawMessage `json:"input,omitempty"`
+	ToolUseID    string          `json:"tool_use_id,omitempty"`
+	Content      string          `json:"content,omitempty"`
+	CacheControl *cacheControl   `json:"cache_control,omitempty"`
 }
 
 type anthropicRequest struct {
 	Model       string          `json:"model"`
 	MaxTokens   int             `json:"max_tokens"`
 	Temperature float64         `json:"temperature"`
-	System      string          `json:"system,omitempty"`
+	System      interface{}     `json:"system,omitempty"`
 	Messages    []anthropicMsg  `json:"messages"`
 	Tools       []anthropicTool `json:"tools,omitempty"`
 	Stream      bool            `json:"stream"`
@@ -103,11 +130,15 @@ type anthropicSSEEvent struct {
 	Delta   json.RawMessage `json:"delta"`
 	Message struct {
 		Usage struct {
-			InputTokens int `json:"input_tokens"`
+			InputTokens              int `json:"input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	} `json:"message"`
 	Usage *struct {
-		OutputTokens int `json:"output_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage"`
 	ContentBlock json.RawMessage `json:"content_block"`
 }
@@ -135,6 +166,26 @@ func toAnthropicTools(tools []ToolDef) []anthropicTool {
 		}
 	}
 	return result
+}
+
+// addCacheControl attaches a cache_control breakpoint to the last content block
+// of an anthropic message. Handles both string content (user/assistant text) and
+// array content (tool results, assistant with tool calls).
+func addCacheControl(content interface{}) interface{} {
+	switch c := content.(type) {
+	case string:
+		return []anthropicContentBlock{{
+			Type:         "text",
+			Text:         c,
+			CacheControl: &cacheControl{Type: "ephemeral"},
+		}}
+	case []anthropicContentBlock:
+		if len(c) > 0 {
+			c[len(c)-1].CacheControl = &cacheControl{Type: "ephemeral"}
+		}
+		return c
+	}
+	return content
 }
 
 func toAnthropicMessages(messages []Message) ([]anthropicMsg, string) {
@@ -186,13 +237,42 @@ func toAnthropicMessages(messages []Message) ([]anthropicMsg, string) {
 
 func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream bool) (*anthropicRequest, error) {
 	anthropicMsgs, systemPrompt := toAnthropicMessages(messages)
+	anthTools := toAnthropicTools(tools)
+
+	// --- Prompt caching: mark cache breakpoints for Anthropic's prompt cache ---
+	// Cache TTL is 5 minutes. Cache hits reduce input cost by 90%.
+	// Strategy:
+	//   1. System prompt — always cached (static, max ROI)
+	//   2. Tool definitions — cache on last tool (rarely change)
+	//   3. Messages — cache all but last 3 (the current turn)
+
+	// 1. System prompt: wrap in array with cache_control.
+	var system interface{}
+	if systemPrompt != "" {
+		system = []anthropicContentBlock{{
+			Type:         "text",
+			Text:         systemPrompt,
+			CacheControl: &cacheControl{Type: "ephemeral"},
+		}}
+	}
+
+	// 2. Tool definitions: cache on last tool.
+	if len(anthTools) > 0 {
+		anthTools[len(anthTools)-1].CacheControl = &cacheControl{Type: "ephemeral"}
+	}
+
+	// 3. Messages: cache all but last 3 (current turn stays hot).
+	if len(anthropicMsgs) > 3 {
+		anthropicMsgs[len(anthropicMsgs)-4].Content = addCacheControl(anthropicMsgs[len(anthropicMsgs)-4].Content)
+	}
+
 	req := &anthropicRequest{
 		Model:       a.Model,
 		MaxTokens:   a.maxTokens,
 		Temperature: a.temperature,
-		System:      systemPrompt,
+		System:      system,
 		Messages:    anthropicMsgs,
-		Tools:       toAnthropicTools(tools),
+		Tools:       anthTools,
 		Stream:      stream,
 	}
 	switch a.thinkingType {
@@ -202,6 +282,9 @@ func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream boo
 		budget := a.thinkingBudget
 		if budget == 0 {
 			budget = min(16000, a.maxTokens/2)
+		}
+		if budget == 0 {
+			budget = 1 // safeguard: API rejects budget_tokens=0
 		}
 		if budget >= a.maxTokens {
 			budget = a.maxTokens - 1
@@ -214,6 +297,7 @@ func (a *Anthropic) buildRequest(messages []Message, tools []ToolDef, stream boo
 	default: // "adaptive" — DeepSeek ignores it → no thinking
 		req.Thinking = map[string]string{"type": "adaptive"}
 	}
+	// Debug: write request to /tmp so we can inspect Anthropic API calls.
 	return req, nil
 }
 
@@ -231,6 +315,7 @@ func (a *Anthropic) Chat(ctx context.Context, messages []Message, tools []ToolDe
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", a.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 
 	resp, err := SharedHTTPClientTimeout.Do(req)
 	if err != nil {
@@ -310,8 +395,9 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-api-key", a.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 
-		resp, err := SharedHTTPClient.Do(req)
+		resp, err := SharedHTTPStreamClient.Do(req)
 		if err != nil {
 			errChan <- err
 			return
@@ -349,7 +435,11 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 			case "message_start":
 				if event.Message.Usage.InputTokens > 0 {
 					tokenChan <- StreamToken{
-						Usage: &StreamUsage{PromptTokens: event.Message.Usage.InputTokens},
+						Usage: &StreamUsage{
+							PromptTokens:            event.Message.Usage.InputTokens,
+							CacheCreationInputTokens: event.Message.Usage.CacheCreationInputTokens,
+							CacheReadInputTokens:    event.Message.Usage.CacheReadInputTokens,
+						},
 					}
 				}
 			case "content_block_start":
@@ -389,9 +479,16 @@ func (a *Anthropic) ChatStream(ctx context.Context, messages []Message, tools []
 
 			case "message_delta":
 				if event.Usage != nil && event.Usage.OutputTokens > 0 {
-					tokenChan <- StreamToken{
-						Usage: &StreamUsage{CompletionTokens: event.Usage.OutputTokens},
+					u := &StreamUsage{
+						CompletionTokens: event.Usage.OutputTokens,
 					}
+					if event.Usage.CacheCreationInputTokens > 0 {
+						u.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
+					}
+					if event.Usage.CacheReadInputTokens > 0 {
+						u.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+					}
+					tokenChan <- StreamToken{Usage: u}
 				}
 			}
 		}

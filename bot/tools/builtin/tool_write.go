@@ -14,7 +14,21 @@ func (t *WriteTool) Name() string                                       { return
 func (t *WriteTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeSequential }
 func (t *WriteTool) DangerLevel(map[string]interface{}) tools.DangerLevel     { return tools.LevelWrite }
 func (t *WriteTool) Description() string {
-	return "Create or overwrite a file. MUST Read existing file first (or will fail). Prefer Edit for modifications. NEVER create documentation files (*.md) or README. Auto-creates parent directories."
+	return `Create a new file or completely overwrite an existing one.
+
+WHEN TO USE:
+- Creating a NEW file (auto-creates parent directories).
+- Replacing the ENTIRE content of an existing file.
+- For partial modifications, use Edit instead.
+
+REQUIREMENTS:
+- If the file ALREADY EXISTS, you MUST Read it first (enforced — the tool will reject writes to unread files).
+- NEVER create documentation files (*.md) or README unless explicitly requested.
+
+GOTCHAS:
+- Content is a single Go string. Use \n for newlines, \" for quotes, \\ for backslashes.
+- Write will overwrite the ENTIRE file — if you only need to change a few lines, use Edit.
+- For large files, consider whether Edit would be more efficient.`
 }
 
 func (t *WriteTool) Parameters() []tools.Parameter {

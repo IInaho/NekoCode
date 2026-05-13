@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"strings"
 )
 
 type EventReader struct {
@@ -28,7 +29,7 @@ func (er *EventReader) Read() (*StreamChunk, error) {
 	}
 
 	data := line[6:]
-	if data == "[DONE]\n" || data == "[DONE]" {
+	if strings.TrimSpace(data) == "[DONE]" {
 		return nil, io.EOF
 	}
 

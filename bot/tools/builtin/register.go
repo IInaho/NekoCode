@@ -14,5 +14,4 @@ func RegisterAll(r *tools.Registry) {
 	r.Register(NewWebFetchTool())
 	r.Register(NewTodoWriteTool())
 	r.Register(NewTaskTool())
-	r.Register(NewSnipTool())
 }

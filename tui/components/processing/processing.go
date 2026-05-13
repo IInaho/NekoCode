@@ -45,13 +45,13 @@ func NewProcessingItem(sty *styles.Styles) *ProcessingItem {
 	return &ProcessingItem{sty: sty, cachedTodosW: -1}
 }
 
-func (p *ProcessingItem) SetSpinnerView(view string) { p.spinnerView = view; p.invalidate() }
-func (p *ProcessingItem) SetStatusText(text string)   { p.statusText = text; p.invalidate() }
+func (p *ProcessingItem) SetSpinnerView(view string) { p.spinnerView = view; p.invalidateLight() }
+func (p *ProcessingItem) SetStatusText(text string)   { p.statusText = text; p.invalidateLight() }
 func (p *ProcessingItem) SetTokens(prompt, completion int) {
-	p.tokenPrompt = prompt; p.tokenCompl = completion; p.invalidate()
+	p.tokenPrompt = prompt; p.tokenCompl = completion; p.invalidateLight()
 }
 func (p *ProcessingItem) SetCompactCount(n int) {
-	if p.compactCount != n { p.compactCount = n; p.invalidate() }
+	if p.compactCount != n { p.compactCount = n; p.invalidateLight() }
 }
 func (p *ProcessingItem) SetBlocks(blocks []block.ContentBlock) {
 	p.blocks = blocks; p.reasoningText.Reset(); p.outputText.Reset(); p.invalidate()
@@ -60,8 +60,8 @@ func (p *ProcessingItem) SetTodos(text string) {
 	if p.todos != text { p.todos = text; p.cachedTodosW = -1; p.invalidate() }
 }
 
-func (p *ProcessingItem) AppendReasoningText(delta string) { p.reasoningText.WriteString(delta); p.invalidate() }
-func (p *ProcessingItem) AppendStreamText(delta string)    { p.outputText.WriteString(delta); p.invalidate() }
+func (p *ProcessingItem) AppendReasoningText(delta string) { p.reasoningText.WriteString(delta); p.invalidateLight() }
+func (p *ProcessingItem) AppendStreamText(delta string)    { p.outputText.WriteString(delta); p.invalidateLight() }
 func (p *ProcessingItem) AddToolBlock(b block.ContentBlock) {
 	if out := p.outputText.String(); out != "" && !strings.HasSuffix(out, "\n") {
 		p.outputText.WriteString("\n")
@@ -73,7 +73,6 @@ func (p *ProcessingItem) AddToolBlock(b block.ContentBlock) {
 	p.invalidate()
 }
 func (p *ProcessingItem) AddDiffBlock(content string) {
-	// Embed diff into the preceding edit tool block.
 	for i := len(p.blocks) - 1; i >= 0; i-- {
 		if p.blocks[i].Type == block.BlockTool && p.blocks[i].ToolName == "edit" {
 			p.blocks[i].Content = content
@@ -83,11 +82,10 @@ func (p *ProcessingItem) AddDiffBlock(content string) {
 	}
 }
 func (p *ProcessingItem) AddTaskOutput(output string) {
-	// Attach sub-agent output to the most recent task tool block so the
-	// user can see what the sub-agent produced.
 	for i := len(p.blocks) - 1; i >= 0; i-- {
 		if p.blocks[i].Type == block.BlockTool && p.blocks[i].ToolName == "task" {
 			p.blocks[i].Content = output
+			p.blocks[i].Collapsed = false
 			p.invalidate()
 			return
 		}
@@ -100,7 +98,14 @@ func (p *ProcessingItem) AddThinkBlock(content string) {
 func (p *ProcessingItem) Clear() {
 	p.blocks = nil; p.todos = ""; p.reasoningText.Reset(); p.outputText.Reset(); p.invalidate()
 }
+
+// invalidate clears all render caches. Use for structural changes (blocks added/removed).
 func (p *ProcessingItem) invalidate() { p.cachedRenderW = -1; p.cachedToolN = 0; p.cachedToolW = 0 }
+
+// invalidateLight clears only the outer render cache but preserves the tool section
+// cache. Use for cosmetic changes (spinner, status, token count, streaming text)
+// that don't change which tool blocks exist.
+func (p *ProcessingItem) invalidateLight() { p.cachedRenderW = -1 }
 
 func (p *ProcessingItem) Height(width int) int {
 	if p.cachedRenderW != width {

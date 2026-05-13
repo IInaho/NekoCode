@@ -65,6 +65,7 @@ type Callbacks struct {
 	GetConfig      func() string
 	ForceSummarize func() (string, error)
 	ContextStats   func() string
+	ContextReport  func() string
 	FreshStart     func() (string, error)
 }
 
@@ -76,6 +77,7 @@ func RegisterDefaults(p *Parser, callbacks *Callbacks) {
   /clear       Clear all conversation history
   /stats       Show context stats (messages, tokens, summary)
   /summarize   Force context compression now
+  /context     Show detailed context window breakdown
   /config      Show current provider and model
   /skill       Load a skill's workflow (see Available Skills in context)
 `, true
@@ -115,6 +117,13 @@ func RegisterDefaults(p *Parser, callbacks *Callbacks) {
 			return result, true
 		}
 		return "Fresh start unavailable", true
+	})
+
+	p.Register("context", func(cmd *Command) (string, bool) {
+		if callbacks.ContextReport != nil {
+			return callbacks.ContextReport(), true
+		}
+		return "Context report unavailable", true
 	})
 
 	p.Register("config", func(cmd *Command) (string, bool) {

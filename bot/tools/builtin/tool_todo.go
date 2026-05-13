@@ -69,16 +69,24 @@ func (t *TodoWriteTool) Execute(ctx context.Context, args map[string]interface{}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Task list updated (%d items):\n", len(items))
+	done := 0
+	for _, it := range items {
+		if it.Status == "completed" {
+			done++
+		}
+	}
 	for i, it := range items {
-		icon := map[string]string{
-			"pending":     "⬜",
-			"in_progress": "🔄",
-			"completed":   "✅",
-		}[it.Status]
-		if icon == "" {
-			icon = "⬜"
+		icon := "·" // · pending
+		switch it.Status {
+		case "in_progress":
+			icon = "▸" // ▸ in progress
+		case "completed":
+			icon = "✓" // ✓ completed
 		}
 		fmt.Fprintf(&b, "%d. %s %s\n", i+1, icon, it.Content)
+	}
+	if done == len(items) {
+		fmt.Fprintf(&b, "All %d tasks complete.", done)
 	}
 	return b.String(), nil
 }

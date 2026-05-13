@@ -74,30 +74,56 @@ func (p *ProcessingItem) renderTodos(cw int) string {
 		return ""
 	}
 	if p.cachedTodosW < 0 || cw != p.cachedTodosW {
-		p.cachedTodos = ""
+		green := lipgloss.NewStyle().Foreground(lipgloss.Color(styles.DiffGreen))
+		var sb strings.Builder
 		for _, line := range strings.Split(p.todos, "\n") {
-			p.cachedTodos += "\n  " + line
+			sb.WriteString("\n  ")
+			switch {
+			case strings.HasPrefix(line, "✓ All"):
+				// All-complete summary in green.
+				sb.WriteString(green.Render(line))
+			case strings.HasPrefix(line, "Tasks "):
+				// Header line: dim counter.
+				sb.WriteString(p.sty.Subtle.Render(line))
+			case strings.HasPrefix(line, "·"):
+				// Pending: muted.
+				sb.WriteString(p.sty.Subtle.Render(line))
+			case strings.HasPrefix(line, "▸"):
+				// In progress: teal accent.
+				sb.WriteString(p.sty.Teal.Render(line))
+			case strings.HasPrefix(line, "✓"):
+				// Completed: green.
+				sb.WriteString(green.Render(line))
+			default:
+				sb.WriteString(line)
+			}
 		}
+		p.cachedTodos = sb.String()
 		p.cachedTodosW = cw
 	}
 	return p.cachedTodos
 }
 
 func (p *ProcessingItem) renderToolSection(contentW, cw int) string {
+	// Fast path: if the tool cache is valid and count hasn't changed, reuse it.
+	// invalidateLight preserves cachedToolN; invalidate resets it to 0.
+	blockCount := len(p.blocks)
+	if blockCount == p.cachedToolN && cw == p.cachedToolW && p.cachedTool != "" {
+		return p.cachedTool
+	}
+	// Rebuild: count tool blocks and render if any exist.
 	toolN := 0
 	for _, b := range p.blocks {
 		if b.Type == block.BlockTool {
 			toolN++
 		}
 	}
-	if toolN != p.cachedToolN || cw != p.cachedToolW {
-		p.cachedTool = ""
-		if toolN > 0 {
-			p.cachedTool = p.renderToolBlocks(contentW)
-		}
-		p.cachedToolN = toolN
-		p.cachedToolW = cw
+	p.cachedTool = ""
+	if toolN > 0 {
+		p.cachedTool = p.renderToolBlocks(contentW)
 	}
+	p.cachedToolN = blockCount
+	p.cachedToolW = cw
 	return p.cachedTool
 }
 

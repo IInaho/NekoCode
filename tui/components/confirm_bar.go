@@ -92,8 +92,6 @@ func (c *ConfirmBar) formatDesc() string {
 		if p, ok := c.req.Args["path"].(string); ok && p != "" {
 			return c.req.ToolName + " " + p
 		}
-	case "snip":
-		return "snip (remove old messages)"
 	}
 	if p, ok := c.req.Args["path"].(string); ok && p != "" {
 		return c.req.ToolName + " " + p

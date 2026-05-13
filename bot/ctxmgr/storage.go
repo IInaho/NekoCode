@@ -8,11 +8,9 @@ func (m *Manager) Add(role, content string) {
 	m.messages = append(m.messages, llm.Message{Role: role, Content: content})
 	m.tokenTracker.AddNew(len(role) + len(content))
 
-	// Auto-extract critical constraints from user messages.
+	// Buffer user messages for deferred constraint extraction at Build time.
 	if role == "user" && m.anchor != nil {
-		for _, c := range m.anchor.ExtractConstraints(content) {
-			m.anchor.AddConstraint(c)
-		}
+		m.anchor.BufferRawUserMessage(content)
 	}
 }
 

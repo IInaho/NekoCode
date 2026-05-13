@@ -63,7 +63,9 @@ func (m *Model) handleDone(msg doneMsg) tea.Cmd {
 
 	prompt, compl := m.Bot.TokenUsage()
 	m.Header.SetTokens(prompt + compl)
-	m.Messages.GotoBottom()
+	if m.Messages.Follow {
+		m.Messages.GotoBottom()
+	}
 	return nil
 }
 
@@ -99,6 +101,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 	case "up":
 		if m.Suggestions.Visible() {
 			m.Suggestions.Cycle(-1)
+		} else if m.state == stateProcessing {
+			m.Messages.Update(msg)
 		} else {
 			m.Input.HistoryUp()
 		}
@@ -106,6 +110,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 	case "down":
 		if m.Suggestions.Visible() {
 			m.Suggestions.Cycle(1)
+		} else if m.state == stateProcessing {
+			m.Messages.Update(msg)
 		} else {
 			m.Input.HistoryDown()
 		}
@@ -148,9 +154,6 @@ func (m *Model) handleProcessingKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "esc":
 		m.Bot.Abort()
 		m.Messages.SetProcessingStatus("Aborted")
-	case "pgup", "pgdown", "up", "down":
-		m.Messages.Update(msg)
-		m.Input.SetFollow(false)
 	default:
 		input, cmd := m.Input.Update(msg)
 		m.Input = input

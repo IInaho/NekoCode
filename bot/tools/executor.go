@@ -14,9 +14,11 @@ type Executor struct {
 	confirmFn  ConfirmFunc
 	phaseFn    PhaseFunc
 	maxWorkers int
+	planMode   bool // when true, reject write/edit/destructive tools
 
 	readFiles map[string]bool // absolute paths that were successfully read
 	readMu    sync.RWMutex
+
 }
 
 func NewExecutor(r *Registry) *Executor {
@@ -29,6 +31,8 @@ func NewExecutor(r *Registry) *Executor {
 
 func (e *Executor) SetConfirmFn(fn ConfirmFunc) { e.confirmFn = fn }
 func (e *Executor) SetPhaseFn(fn PhaseFunc)     { e.phaseFn = fn }
+func (e *Executor) SetPlanMode(on bool)         { e.planMode = on }
+func (e *Executor) InPlanMode() bool            { return e.planMode }
 
 // MarkRead records that a file was successfully read. Called after read tool executes.
 func (e *Executor) MarkRead(path string) {
@@ -122,6 +126,13 @@ func (e *Executor) executeOne(ctx context.Context, tc ToolCallItem) ToolCallResu
 	if e.phaseFn != nil {
 		e.phaseFn(PhaseRunning + " " + tc.Name)
 	}
+	if e.planMode && level >= LevelWrite {
+		return ToolCallResult{
+			ID: tc.ID, Name: tc.Name,
+			Error: fmt.Sprintf("plan mode: %s is write/destructive — only read, grep, glob, list, web_search, web_fetch allowed. Present your plan first, then user will approve execution.", tc.Name),
+		}
+	}
+
 	if level >= LevelWrite && e.confirmFn != nil {
 		if !e.confirmFn(ConfirmRequest{
 			ToolName: tc.Name, Args: tc.Args, Level: level,
@@ -164,13 +175,23 @@ func (e *Executor) executeOne(ctx context.Context, tc ToolCallItem) ToolCallResu
 	// can visually distinguish tool results from conversation and system prompts.
 	// Then scan for instruction-like patterns that could cause prompt injection.
 	output = WrapToolOutput(tc.Name, tc.ID, output)
-	output = GuardToolOutput(output)
 
 	// Track successful reads for read-before-write enforcement.
 	if tc.Name == "read" {
 		if path, ok := tc.Args["path"].(string); ok && path != "" {
 			if resolved, err := resolvePath(path); err == nil {
 				e.MarkRead(resolved)
+			}
+		}
+	}
+
+	// Invalidate file cache entries for modified files.
+	if tc.Name == "edit" || tc.Name == "write" {
+		if path, ok := tc.Args["path"].(string); ok && path != "" {
+			if resolved, err := resolvePath(path); err == nil {
+				if GlobalFileCache != nil {
+					GlobalFileCache.Invalidate(resolved)
+				}
 			}
 		}
 	}

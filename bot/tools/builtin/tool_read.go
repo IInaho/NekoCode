@@ -22,7 +22,18 @@ func (t *ReadTool) Name() string                                              { 
 func (t *ReadTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode   { return tools.ModeParallel }
 func (t *ReadTool) DangerLevel(map[string]interface{}) tools.DangerLevel       { return tools.LevelSafe }
 func (t *ReadTool) Description() string {
-	return "Read file contents. Supports text, images, PDF. ALWAYS use Read — NEVER invoke cat/head/tail as Bash. Path must be absolute. Default max 2000 lines; use offset/limit for large files, or Grep for search."
+	return `Read file contents (text, images, PDF). Path must be absolute.
+
+ALWAYS use Read — NEVER invoke cat/head/tail as Bash. Read provides:
+- FILE_UNCHANGED_STUB: re-reading an unchanged file returns a short stub (saves tokens)
+- Line numbering for precise Edit old_string selection
+- Image format + dimensions for PNG/JPG/GIF
+- PDF metadata (size, pages)
+
+TIPS:
+- Default max 2000 lines. For large files, use offset/limit to read in chunks.
+- If you only need to search content, use Grep instead — it's more token-efficient.
+- Before reading, check if you already have the content in context from earlier reads.`
 }
 
 func (t *ReadTool) Parameters() []tools.Parameter {
@@ -63,8 +74,14 @@ func (t *ReadTool) readTextCached(path string, args map[string]interface{}) (str
 	}
 
 	if tools.GlobalFileCache != nil {
-		if content, hit := tools.GlobalFileCache.Get(path, offset, limit); hit {
-			return content, nil
+		if cached, hit := tools.GlobalFileCache.Get(path, offset, limit); hit {
+			// Return first 800 chars so the LLM can recognize the file
+			// without needing to re-read the full content.
+			preview := cached
+			if len(preview) > 800 {
+				preview = preview[:800]
+			}
+			return fmt.Sprintf("[UNCHANGED %s \u2014 %d chars total]\n%s\n[END UNCHANGED]", path, len(cached), preview), nil
 		}
 	}
 

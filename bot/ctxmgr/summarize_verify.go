@@ -19,19 +19,20 @@ func (m *Manager) verifySummary(summary string) []string {
 	if m.anchor == nil {
 		return nil
 	}
+	return checkConstraints(m.anchor.Constraints(), summary)
+}
 
-	constraints := m.anchor.Constraints()
+// checkConstraints is the lock-free core of verifySummary, accepting a
+// pre-snapshotted constraint list so it can be called outside m.mu.
+func checkConstraints(constraints []string, summary string) []string {
 	if len(constraints) == 0 {
 		return nil
 	}
-
 	var missing []string
 	summaryLower := strings.ToLower(summary)
 	for _, c := range constraints {
 		cLower := strings.ToLower(c)
-		// Check for presence of the constraint text or its key content words.
 		if !strings.Contains(summaryLower, cLower) {
-			// Fuzzy match: check if at least the longest word appears.
 			longestWord := longestWord(cLower)
 			if longestWord == "" || !strings.Contains(summaryLower, longestWord) {
 				missing = append(missing, c)

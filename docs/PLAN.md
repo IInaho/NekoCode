@@ -26,7 +26,7 @@
 - `BuildToolGroups` 在 streaming 和 message 两侧共享
 
 ### 5. TUI-Bot 解耦 ✅
-- `BotInterface` 接口（17 个方法）
+- `BotInterface` 接口（18 个方法）
 - Phase 类型和 Confirm 类型统一定义在 `bot/tools/`
 - Bot 通过接口暴露，TUI 零耦合
 
@@ -65,10 +65,11 @@
 - 10 section Markdown 文件：`~/.nekocode/sessions/<id>/memory.md`
 - `/new` 命令用 session memory 做免费摘要（不调 API）
 
-### 12. Snip 工具 ✅
+### 12. Snip 工具 ✅ → 已移除
 - 模型通过 `snip` 工具主动移除旧消息范围
 - `[id:N]` 标签仅在 API 侧注入，用户不可见
 - 被 snipped 的消息在后续 Build() 中过滤
+- **已移除**：技能上下文改用 `RemoveMessages()` 直接清除，snip 复杂度过高且收益有限
 
 ### 13. `/new` 命令 ✅
 - 开始新对话，保留上一任务摘要
@@ -139,7 +140,7 @@
 ### 28. 幻觉防治体系 ✅
 基于主流方案调研实施的 14 项防幻觉改造：
 - System Prompt 增强（禁止生成 URL、忠实报告、Prompt Injection 检测、当前状态权威）+ 日期注入
-- 末日循环检测（3 次相同调用 → forceSynthesize）
+- 末日循环检测（4 次相同调用 → forceSynthesize）
 - 工具输出预算截断（2000行/50KB）
 - "先读后改"运行时强制（Edit/Write 前校验 Read 记录）
 - web_search/fetch 来源引用强制
@@ -186,9 +187,9 @@
 - Normal → Warning → MicroCompact → Compact → Blocking
 - `AutoCompactIfNeeded()` 每次 Build() 前自动判定
 
-### 34. BoltDB 持久化 ✅
-- 对话历史持久存储，重启不丢失
-- `ctxmgr/storage.go` 管理存取
+### 34. 对话历史存取 ✅
+- 消息存取：Add/AddToolResult/Clear/FreshStart
+- `ctxmgr/storage.go` 管理存取（内存存储，非持久化）
 
 ### 35. NEKOCODE.md 项目上下文 ✅
 - 多层级目录发现（~/.nekocode/ → 项目根/ → .nekocode/ → rules/）
@@ -221,29 +222,116 @@
 ### 41. 文档更新 ✅
 - ARCHITECTURE.md / DESIGN.md / CONTEXT_DESIGH.md / PLAN.md 反映当前项目状态
 
+### 42. 分层 System Prompt ✅
+
+### 42. 分层 System Prompt ✅
+- `system_claude.md`：think-first + plan-before-code（Claude/GPT）
+- `system_deepseek.md`：act-first + anti-overthinking（DeepSeek/GLM）
+- `bot.go` 按 `cfg.Provider` 自动选择
+
+### 43. 工具描述精准化 ✅
+- bash/edit/write/task 四大核心工具描述大幅扩展
+- 包含使用时机、反模式、常见错误、具体示例
+
+### 44. TodoWrite 一等公民 ✅
+- 两套 prompt 均新增 `# Task Tracking` 章节
+- 3+ 步骤任务必须先用 todo_write，实时更新状态
+
+### 45. Anthropic Prompt Caching ✅
+- `llm/anthropic.go`：3 个 `cache_control: {type: "ephemeral"}` 断点
+- system prompt / last tool def / 倒数第 4 条消息 标记缓存
+- `anthropic-beta: prompt-caching-2024-07-31` 请求头
+- `StreamUsage` 追踪 `cache_read/creation_input_tokens`
+
+### 46. DeepSeek Prefix Cache 优化 ✅
+- `Build()` 三阶段重排：static → stable(messages) → dynamic(todo/summary/skill)
+- micro-compaction 保留数按 token budget 分级（5/8/12）
+- 最大化服务端 automatic prefix caching 命中率
+
+### 47. Plan Mode ✅
+- `/plan <task>` 命令进入只读探索模式
+- Executor planMode 阻断 write/edit/destructive-bash
+- 一个回合后自动退出，用户可直接继续执行
+
+### 48. Auto-Review 自动验证 ✅
+- 文件修改后 → 单次注入 build+test 提示
+- 修 bug 未复现 → 注入复现+验证提示
+- `filesModified`（write/edit 触发）、`didReproduce`（bash 失败触发）、`verifyInjected`（防重复）三个字段
+
+### 49. Bug 分析反幻觉 ✅
+- 两套 prompt 新增 `# Debugging` 6 阶段方法论 + Anti-patterns 清单
+- 删除了 `isModifyingCommand` / `isVerifyCommand` / `isReproCommand` 三个不可靠的字符串匹配函数
+- `didReproduce` 基于实际结果判断（exit≠0 或输出含 error/panic），而非命令名匹配
+
+### 50. 智能截断 ✅
+- head(40) + tail(20) 双保留，错误时扩展 tail 到 60+
+- 重复行折叠（连续 8 行相同 → `[repeated N times]`）
+- `isErrorLine` 检测 20+ 错误模式
+
+### 51. 任务列表 UI 主题化 ✅
+- emoji 替换为 `·` `▸` `✓` Unicode 字符
+- `renderTodos()` 状态着色（Subtle/Teal/DiffGreen）
+- 全部完成显示绿色摘要而非隐藏
+
+### 52. 长任务友好 ✅
+- `maxIterations` 15→30，`config.json` 可配
+- `doomLoopWindow` 3→4，`lowOutputThreshold` 3→5
+- `ContextTransform` 阈值 20→40 tool results
+
+### 53. Edit 模糊匹配修复 ✅
+- `findWithFuzzy` 返回 `(start, end, pass)` 三值
+- `mapNormPosToOrig` 提取为独立函数
+- 修复 fuzzy match 时 `idx+len(oldStr)` 越界 panic
+
+### 54. 子 Agent 安全分类器 ✅
+- `bot/agent/subagent/classify.go`：pattern-matching 零成本安全审核
+- `bot/agent/subagent/result.go`：结构化 Result 类型 + XML 序列化 + Status/Classification
+- 子 agent 结果注入 SECURITY WARNING 前缀，不阻断信息流
+
+### 55. LLM Factory + Clone 一致性 ✅
+- `llm/factory.go`：NewClient / Clone 统一 provider 感知工厂
+- Clone 传递 thinkingBudget，消除与 NewClient 的行为不一致
+- Anthropic 构造函数统一接受 baseURL 参数
+
+### 56. 流式 HTTP 客户端超时 ✅
+- `SharedHTTPStreamClient`（10min）：防止服务端 hang 导致 goroutine 泄漏
+- ChatStream 改用独立超时客户端，同步 Chat 保持 120s
+
+### 57. 智能重试判定 ✅
+- HTTP 状态码提取（正则匹配两种错误格式）替代字符串关键字匹配
+- 408/429/5xx → 可重试，其余 4xx → 不可重试
+- 网络层错误关键字兜底
+
+### 58. Thinking 方法跨 Provider 互译 ✅
+- Anthropic `SetReasoningEffort`：high/max → thinking enabled + budget tokens；不再是空函数
+- OpenAICompatible `SetThinkingBudget`：token 数量 → reasoning_effort 映射；不再是简单 on/off
+- 调用方可无视 provider 使用任一方法
+
+### 59. Bot 生命周期管理 ✅
+- `bot/lifecycle.go`：SummarizeIfNeeded() / ForceSummarize() / ForceFreshStart()
+- `bot/commands.go`：RegisterDefaults() 集中注册内置命令
+- ContextReport：结构化诊断报告（消息/摘要/tool def token 用量）
+
 ---
 
 ## P2 — 生态与体验
 
-### 42. 后台任务 + 进度
+### 60. 后台任务 + 进度
 - 长运行命令流式输出，不阻塞主 Agent 循环
 
-### 43. Checkpoint / Undo
+### 61. Checkpoint / Undo
 - 每次工具写入前自动保存快照
 - `/undo` 命令回滚
 
-### 44. MCP 协议支持
+### 62. MCP 协议支持
 - MCP client，连接外部 tool server
 
-### 45. Session 管理
+### 63. Session 管理
 - 对话存档/恢复，支持分支对话
 
-### 46. Plan 模式
-- 复杂改动先出方案文本，用户审批后执行
-
-### 47. 凭证管理
+### 64. 凭证管理
 - API key 安全存储，多 profile 切换
 
-### 48. 自动化测试
+### 65. 自动化测试
 - Agent 行为回归测试（mock LLM 响应）
 - 工具执行单元测试（mock 文件系统/shell）

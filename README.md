@@ -81,6 +81,7 @@ Bot 核心通过接口与 UI 完全解耦。同样的 Agent，今天跑在终端
 | `/stats` | 上下文用量统计 |
 | `/summarize` | 手动压缩记忆 |
 | `/config` | 当前 provider / model |
+| `/plan <任务>` | 只读探索模式，设计方案后审批执行 |
 | `/<skill>` | 加载技能工作流 |
 
 输入 `/` 自动弹出补全，Tab 选择，Enter 填入。
@@ -141,9 +142,11 @@ cat > ~/.nekocode/config.json << 'EOF'
 {
   "provider": "anthropic",
   "api_key": "sk-your-key-here",
-  "model": "gpt-4",
+  "model": "claude-sonnet-4-6",
   "base_url": "https://api.anthropic.com/v1",
-  "token_budget": 128000
+  "token_budget": 128000,
+  "thinking_budget": 16000,
+  "max_iterations": 30
 }
 EOF
 
@@ -163,7 +166,7 @@ go build -o nekocode .
 ### 已完成
 
 - **Agent 循环**：Reason → Execute → Feedback 三轮循环，并行工具调度，子 Agent 委派
-- **12+ 内置工具**：bash、文件读写编辑、glob/grep 搜索、网页搜索/抓取、任务跟踪
+- **11+ 内置工具**：bash、文件读写编辑、glob/grep 搜索、网页搜索/抓取、任务跟踪、子 agent 委派
 - **多 Provider 网关**：Anthropic + OpenAI + GLM + DeepSeek 统一接入
 - **五级上下文管理**：Normal → Warning → MicroCompact → Compact → Blocking 递进压缩
 - **上下文锚点**：压缩时自动保留关键用户指令和系统约束
@@ -186,7 +189,7 @@ go build -o nekocode .
 - **MCP 协议支持**：连接外部 MCP server，工具生态无限扩展。数据库查询、K8s 管理、监控告警——任何 MCP server 都是 NekoCode 的工具
 - **Web GUI**：Bot 核心通过接口解耦，Web 前端无缝对接。同一个 Agent，浏览器里用
 - **IM 接入**：对接企业微信、飞书、Slack，Bot 作为全天候托管 Agent。早上收到任务，晚上回来验收——全程在 IM 里完成
-- **Plan 模式**：复杂改动先出方案文本，用户审批后自动执行
+- **Plan 模式**： `/plan` 只读探索，设计方案后审批执行
 - **Checkpoint / Undo**：每次写入前自动快照，随时回滚
 - **Session 管理**：对话存档恢复，支持分支对话
 - **凭证管理**：多 profile 安全切换，开发/生产环境隔离

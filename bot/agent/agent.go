@@ -12,14 +12,47 @@ import (
 	"nekocode/llm"
 )
 
-// StopInfo is passed to ShouldStopFunc, mirroring Pi's ShouldStopAfterTurnContext.
-type StopInfo struct {
-	Step      int
-	State     *stepState
-	Reasoning *ReasoningResult
+// StopReason categorizes why the agent loop stopped.
+type StopReason int
+
+const (
+	StopCompleted          StopReason = iota // normal completion — model returned text without tools
+	StopInterrupted                          // user aborted
+	StopDoomLoop                             // identical tool calls detected
+	StopDiminishingReturns                   // consecutive turns with minimal progress
+	StopHookPrevented                        // shouldStop hook returned true
+)
+
+func (s StopReason) String() string {
+	switch s {
+	case StopCompleted:
+		return "completed"
+	case StopInterrupted:
+		return "interrupted"
+	case StopDoomLoop:
+		return "doom_loop"
+	case StopDiminishingReturns:
+		return "diminishing_returns"
+	case StopHookPrevented:
+		return "hook_prevented"
+	default:
+		return "unknown"
+	}
 }
 
-// ShouldStopFunc is a configurable stop condition, like Pi's shouldStopAfterTurn.
+// StopInfo is passed to ShouldStopFunc after each tool-execution turn.
+type StopInfo struct {
+	Step             int
+	State            *stepState
+	TokensUsed       int  // total prompt+completion tokens this session
+	TokenBudget      int  // configured token budget
+	BudgetPressure   bool // true if context is over 80% of token budget
+	ConsecutiveTurns int  // number of turns since last meaningful progress
+}
+
+// ShouldStopFunc is a configurable stop condition.
+// Return true to force synthesis and stop. The StopInfo provides full context
+// so hooks can make nuanced decisions (e.g., "stop if >10 turns AND budget pressure").
 type ShouldStopFunc func(info StopInfo) bool
 
 // ContextTransform allows extensions to inspect/modify messages before LLM calls,
@@ -43,9 +76,9 @@ type Agent struct {
 	executor             *tools.Executor
 	phaseFn              tools.PhaseFunc
 	lastReasoningContent string
-	maxIterations        int
 	currentStep          int
 	finished             bool
+	stopReason           StopReason // why the last run stopped
 	shouldStop           ShouldStopFunc
 	transformContext     ContextTransform
 	streamFn             StreamCallback
@@ -55,13 +88,25 @@ type Agent struct {
 	synthesizePrompt     string
 	tokenPrompt          atomic.Int64
 	tokenCompletion      atomic.Int64
-	tokenCalls           atomic.Int64
 	startTime            time.Time
+	// Diminishing returns tracking (Claude Code checkTokenBudget pattern).
+	// Tracks consecutive turns where token output was below the threshold.
+	diminishingStreak int
+	lastTurnTokens    int64 // tokens used in the most recent turn
+	// Budget pressure: when context fills up, inject meta-messages to push
+	// the model toward synthesis rather than continued exploration.
+	budgetPressureInjected bool
 }
 
 const (
-	defaultMaxIterations = 15
-	steeringChBuffer     = 4
+	steeringChBuffer = 4
+	// Diminishing returns: if N consecutive turns each produce fewer than
+	// this many completion tokens, the model is spinning its wheels.
+	diminishingThreshold = 3   // consecutive low-output turns
+	minCompletionTokens  = 200 // minimum completion tokens per turn to count as "progress"
+	// Budget pressure: when context exceeds this fraction of the token budget,
+	// inject a meta-message urging synthesis.
+	budgetPressureRatio = 0.8
 )
 
 func New(
@@ -79,7 +124,6 @@ func New(
 		llmClient:        llmClient,
 		toolRegistry:     toolRegistry,
 		executor:         tools.NewExecutor(toolRegistry),
-		maxIterations:    defaultMaxIterations,
 		steeringCh:       make(chan string, steeringChBuffer),
 		synthesizePrompt: "Based on the information collected above, provide a final answer. Do NOT call any more tools. Output your conclusion directly.",
 	}
@@ -88,14 +132,13 @@ func New(
 func (a *Agent) SetConfirmFn(fn tools.ConfirmFunc) { a.executor.SetConfirmFn(fn) }
 func (a *Agent) SetPhaseFn(fn tools.PhaseFunc)     { a.phaseFn = fn; a.executor.SetPhaseFn(fn) }
 func (a *Agent) PhaseFn() tools.PhaseFunc          { return a.phaseFn }
+func (a *Agent) SetPlanMode(on bool)               { a.executor.SetPlanMode(on) }
+
+// StopReason returns why the last run stopped.
+func (a *Agent) StopReason() StopReason { return a.stopReason }
 func (a *Agent) WireTodoWrite(fn tools.TodoFunc) {
 	if t, err := a.toolRegistry.Get("todo_write"); err == nil {
 		t.(*builtin.TodoWriteTool).SetUpdateFn(fn)
-	}
-}
-func (a *Agent) WireSnip(fn tools.SnipFunc) {
-	if t, err := a.toolRegistry.Get("snip"); err == nil {
-		t.(*builtin.SnipTool).Wire(fn)
 	}
 }
 func (a *Agent) SetShouldStop(fn ShouldStopFunc)           { a.shouldStop = fn }
@@ -141,7 +184,6 @@ func (a *Agent) Abort() {
 func (a *Agent) AddTokens(prompt, completion int) {
 	a.tokenPrompt.Add(int64(prompt))
 	a.tokenCompletion.Add(int64(completion))
-	a.tokenCalls.Add(1)
 	writeAgentLog("AddTokens(+%d,+%d) total: p=%d c=%d", prompt, completion,
 		a.tokenPrompt.Load(), a.tokenCompletion.Load())
 }
@@ -176,10 +218,13 @@ func (a *Agent) Reset() {
 	a.ctxMu.Unlock()
 	a.currentStep = 0
 	a.finished = false
+	a.stopReason = StopCompleted
 	a.lastReasoningContent = ""
 	a.doomLoopHistory = nil
+	a.diminishingStreak = 0
+	a.lastTurnTokens = 0
+	a.budgetPressureInjected = false
 	a.tokenPrompt.Store(0)
 	a.tokenCompletion.Store(0)
-	a.tokenCalls.Store(0)
 	a.startTime = time.Now()
 }

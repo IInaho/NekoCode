@@ -47,17 +47,11 @@ type AutoCompactConfig struct {
 }
 
 var DefaultAutoCompactConfig = AutoCompactConfig{
-	WarningBuffer:      20000,
-	MicroCompactBuffer: 13000,
-	CompactBuffer:      10000,
-	BlockingBuffer:     3000,
+	WarningBuffer:      44800, // ~30% usage @64K
+	MicroCompactBuffer: 35200, // ~45% usage @64K
+	CompactBuffer:      25600, // ~60% usage @64K — LLM summary over blind clear
+	BlockingBuffer:     6400,  // ~90% usage @64K
 	MaxConsecutiveFail: 3,
-}
-
-// AutoCompact tracks auto-compaction state.
-type AutoCompact struct {
-	mu            sync.Mutex
-	consecutiveFails int
 }
 
 // AutoCompactIfNeeded is the main entry point. It checks token usage and triggers
@@ -141,11 +135,17 @@ type TokenTracker struct {
 }
 
 // RecordUsage records token usage from an API response.
+// Only non-zero fields are updated — some providers (Anthropic) split
+// prompt and completion usage across separate streaming events.
 func (t *TokenTracker) RecordUsage(promptTokens, completionTokens int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.lastPromptTokens = promptTokens
-	t.lastCompTokens = completionTokens
+	if promptTokens > 0 {
+		t.lastPromptTokens = promptTokens
+	}
+	if completionTokens > 0 {
+		t.lastCompTokens = completionTokens
+	}
 	t.newMessageTokens = 0
 }
 

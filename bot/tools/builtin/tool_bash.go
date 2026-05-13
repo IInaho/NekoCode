@@ -18,20 +18,38 @@ func (t *BashTool) Name() string                                       { return 
 func (t *BashTool) ExecutionMode(map[string]interface{}) tools.ExecutionMode { return tools.ModeSequential }
 
 func (t *BashTool) Description() string {
-	return `Execute shell commands.
+	return `Execute shell commands. 120s timeout. Working directory persists but shell state (env vars, cd) does NOT.
 
-IMPORTANT: Avoid using this tool for find, grep, cat, head, tail, sed, awk, echo — use dedicated tools instead:
-- File search: Glob (not find/ls)
-- Content search: Grep (not grep/rg)
-- Read files: Read (not cat/head/tail)
-- Edit files: Edit (not sed/awk)
-- Write files: Write (not echo >/cat <<EOF)
+DEDICATED TOOLS FIRST — using Bash for these will be rejected or produce worse results:
+- Read files → Read (never cat/head/tail)
+- Edit files → Edit (never sed/awk)
+- Write files → Write (never echo >/cat <<EOF)
+- Search content → Grep (never grep/rg)
+- Find files → Glob (never find/ls)
 
-Rules:
-- Verify parent directory exists before creating files/dirs. Use absolute paths, avoid cd
-- Chain dependent commands with &&. NEVER use newlines to separate commands
-- Git: NEVER update git config, NEVER skip hooks (--no-verify), NEVER force push to main/master
-- CRITICAL: Always create NEW commits, never amend`
+MULTI-COMMAND STRATEGY:
+- Independent commands → parallel Bash calls in a single message
+- Dependent commands → chain with && (not newlines — shell state is lost between calls)
+- Independent but sequential → use ; or separate calls
+
+RULES:
+- Use absolute paths. Quote paths containing spaces.
+- Verify parent directories exist before creating files.
+- Git: NEVER update git config. NEVER skip hooks (--no-verify). NEVER force push to main/master. Always create NEW commits, never amend.
+- Destructive commands (rm, kill, shutdown) require confirmation.
+
+SLEEP AVOIDANCE:
+- Do NOT sleep between commands that can run immediately — just run them.
+- Do NOT retry failing commands in a sleep loop — diagnose the root cause.
+- If waiting for a background task, wait for the completion notification — do NOT poll.
+- If you must sleep, keep the duration short.
+
+ANTI-PATTERNS THAT CAUSE FAILURES:
+- "cd some_dir" then next command — shell state is lost between calls. Use absolute paths or &&.
+- "git push --force" — forbidden on main/master.
+- "npm install" without checking if package.json exists.
+- Piped commands that hide errors — prefer && chains for critical steps.
+- Long-running servers/processes — the tool has a 120s timeout.`
 }
 
 func (t *BashTool) Parameters() []tools.Parameter {
