@@ -1,16 +1,14 @@
-// agent.go — 启动 agent 对话流程：startChat、startAgent、工具函数。
+// agent.go — 启动 agent 对话流程：startChat、startAgent。
 package tui
 
 import (
 	"fmt"
 	"os"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"nekocode/tui/components/block"
 	"nekocode/tui/components/message"
-	"nekocode/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -116,19 +114,5 @@ func (m *Model) onAgentStep(finalResponse *string) func(int, string, string, str
 			}
 		}
 	}
-}
-
-// extractDiffContent strips the edit tool's header line, leaving only -/+/context lines.
-func extractDiffContent(output string) string {
-	idx := strings.Index(output, "\n")
-	if idx < 0 {
-		return output
-	}
-	return output[idx+1:]
-}
-
-func tokensSummary(b BotInterface) string {
-	p, c := b.TokenUsage()
-	return "↑" + styles.FmtTokens(p) + " ↓" + styles.FmtTokens(c)
 }
 

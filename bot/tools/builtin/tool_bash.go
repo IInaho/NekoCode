@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+
 	"nekocode/bot/tools"
 )
 
@@ -133,10 +135,20 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}) (st
 
 	cmdStr = strings.TrimSpace(cmdStr)
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
+	cmd := exec.Command("bash", "-c", cmdStr)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Dir, _ = os.Getwd()
-	output, err := cmd.CombinedOutput()
 
+	// Kill the entire process group on context cancellation.
+	// exec.CommandContext only kills the direct child (bash), not grandchildren.
+	stop := context.AfterFunc(ctx, func() {
+		if cmd.Process != nil {
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	})
+	defer stop()
+
+	output, err := cmd.CombinedOutput()
 	cleaned := tools.StripAnsi(string(output))
 
 	if err != nil {

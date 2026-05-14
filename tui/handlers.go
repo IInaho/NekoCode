@@ -103,6 +103,10 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 			m.Suggestions.Cycle(-1)
 		} else if m.state == stateProcessing {
 			m.Messages.Update(msg)
+		} else if m.Input.CanCursorUp() {
+			input, cmd := m.Input.Update(msg)
+			m.Input = input
+			return cmd
 		} else {
 			m.Input.HistoryUp()
 		}
@@ -112,6 +116,10 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 			m.Suggestions.Cycle(1)
 		} else if m.state == stateProcessing {
 			m.Messages.Update(msg)
+		} else if m.Input.CanCursorDown() {
+			input, cmd := m.Input.Update(msg)
+			m.Input = input
+			return cmd
 		} else {
 			m.Input.HistoryDown()
 		}

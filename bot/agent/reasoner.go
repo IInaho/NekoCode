@@ -338,7 +338,7 @@ func (a *Agent) forceSynthesize() string {
 	if fb := a.emergencySynthesize(); fb != "" {
 		return fb
 	}
-	return "Unable to generate summary"
+	return "Task completed but the model was unable to produce a final summary — the context may be too full or the API may have timed out. You can try asking a follow-up question or running the task again."
 }
 
 // trySynthesize attempts to get a final summary from the LLM with full context.

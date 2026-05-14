@@ -410,7 +410,7 @@ func (e *Engine) forceSynthesize(ctx context.Context, mgr *ctxmgr.Manager) strin
 			return t
 		}
 	}
-	return "Unable to generate summary"
+	return "Subagent completed but was unable to produce a final summary — the context may be too full or the API may have timed out."
 }
 
 func (e *Engine) filteredToolDefs(allowed []string) []llm.ToolDef {

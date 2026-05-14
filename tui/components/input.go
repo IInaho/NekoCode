@@ -1,5 +1,5 @@
 // Input 消息输入框：封装 Bubble Tea textarea，含发送历史翻阅（historyActive 状态机）、
-// 发送过渡态（sending prompt）、光标管理。
+// 发送过渡态（sending prompt）、光标管理。支持多行输入（Alt+Enter 换行）。
 package components
 
 import (
@@ -8,13 +8,17 @@ import (
 
 	"nekocode/tui/styles"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
+const (
+	charLimit     = 32768
+	maxInputLines = 8
+)
 
-const charLimit = 32768
 type Input struct {
 	textarea      textarea.Model
 	width         int
@@ -34,11 +38,11 @@ func NewInput(width int) *Input {
 	ta.Prompt = styles.CatEyeStyle.Bold(true).Render(styles.HeavyVert + " ")
 	ta.CharLimit = charLimit
 	ta.SetWidth(width)
+	ta.MaxHeight = maxInputLines
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
-	// InsertNewline enabled so pasted multi-line text is preserved.
-	// Enter key is intercepted in Update() to trigger submit instead of newline.
-	ta.KeyMap.InsertNewline.SetEnabled(true)
+	// Enter = submit (intercepted in Update), Alt+Enter = newline.
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter"))
 
 	s := ta.Styles()
 	s.Focused.CursorLine = lipgloss.NewStyle()
@@ -68,10 +72,11 @@ func (i *Input) Value() string {
 
 func (i *Input) SetValue(value string) {
 	i.textarea.SetValue(value)
+	i.adjustHeight()
 }
 
 func (i *Input) SetCursorEnd() {
-	i.textarea.SetCursorColumn(len(i.textarea.Value()))
+	i.textarea.MoveToEnd()
 }
 
 func (i *Input) Reset() {
@@ -79,6 +84,7 @@ func (i *Input) Reset() {
 	i.sending = false
 	i.historyActive = false
 	i.textarea.Prompt = styles.CatEyeStyle.Bold(true).Render(styles.HeavyVert + " ")
+	i.adjustHeight()
 }
 
 func (i *Input) AddHistory(entry string) {
@@ -101,7 +107,7 @@ func (i *Input) HistoryUp() {
 	}
 	if i.historyIdx > 0 {
 		i.historyIdx--
-		i.textarea.SetValue(i.history[i.historyIdx])
+		i.SetValue(i.history[i.historyIdx])
 	}
 	i.historyActive = true
 }
@@ -112,13 +118,12 @@ func (i *Input) HistoryDown() {
 	}
 	i.historyIdx++
 	if i.historyIdx == len(i.history) {
-		i.textarea.SetValue(i.savedInput)
+		i.SetValue(i.savedInput)
 		i.historyActive = false
 	} else {
-		i.textarea.SetValue(i.history[i.historyIdx])
+		i.SetValue(i.history[i.historyIdx])
 	}
 }
-
 
 func (i *Input) SetSending(sending bool) {
 	i.sending = sending
@@ -133,8 +138,30 @@ func (i *Input) SetFollow(follow bool) {
 	i.follow = follow
 }
 
+// CanCursorUp returns true if the cursor is not on the first line.
+func (i *Input) CanCursorUp() bool {
+	return i.textarea.Line() > 0
+}
+
+// CanCursorDown returns true if the cursor is not on the last line.
+func (i *Input) CanCursorDown() bool {
+	return i.textarea.Line() < i.textarea.LineCount()-1
+}
+
+func (i *Input) adjustHeight() {
+	lines := i.textarea.LineCount()
+	if lines < 1 {
+		lines = 1
+	}
+	if lines > maxInputLines {
+		lines = maxInputLines
+	}
+	i.textarea.SetHeight(lines)
+}
+
 func (i *Input) Height() int {
-	return 5 // separator + input + spacer + footer + separator
+	h := i.textarea.Height()
+	return 4 + h // separator + textarea + spacer + footer + separator
 }
 
 // Cursor returns the cursor position adjusted to be relative to the top of
@@ -145,17 +172,29 @@ func (i *Input) Cursor() *tea.Cursor {
 	if c == nil {
 		return nil
 	}
-	return tea.NewCursor(c.Position.X, 1)
+	return tea.NewCursor(c.Position.X, c.Position.Y+1)
 }
 
 func (i *Input) Update(msg tea.Msg) (*Input, tea.Cmd) {
-	// Intercept Enter: don't insert newline (app handles submission).
-	// Other keys (including paste events with multi-line content) pass through.
-	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "enter" {
-		return i, nil
+	switch m := msg.(type) {
+	case tea.KeyPressMsg:
+		if m.String() == "enter" {
+			return i, nil // submit
+		}
+		// Pre-expand height before newline so the textarea's viewport
+		// doesn't scroll internally and hide earlier lines.
+		if m.String() == "alt+enter" {
+			if cur := i.textarea.LineCount(); cur < maxInputLines {
+				i.textarea.SetHeight(cur + 1)
+			}
+		}
+	case tea.PasteMsg:
+		// Pasted text may contain newlines — pre-expand to avoid scroll flicker.
+		i.textarea.SetHeight(maxInputLines)
 	}
 	var cmd tea.Cmd
 	i.textarea, cmd = i.textarea.Update(msg)
+	i.adjustHeight()
 	return i, cmd
 }
 

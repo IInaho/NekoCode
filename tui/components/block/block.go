@@ -28,3 +28,14 @@ type ContentBlock struct {
 var toolAccent = lipgloss.NewStyle().Foreground(lipgloss.Color(styles.Yellow))
 
 func ToolAccent() lipgloss.Style { return toolAccent }
+
+func FilterFinalBlocks(blocks []ContentBlock) []ContentBlock {
+	out := make([]ContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		switch b.Type {
+		case BlockTool:
+			out = append(out, b)
+		}
+	}
+	return out
+}

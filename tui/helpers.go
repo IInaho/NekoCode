@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"nekocode/bot/tools"
+	"nekocode/tui/styles"
 )
 
 func formatBriefArgs(toolName, toolArgs string) string {
@@ -71,6 +72,20 @@ func formatBriefArgs(toolName, toolArgs string) string {
 		}
 		return ""
 	}
+}
+
+// extractDiffContent strips the edit tool's header line, leaving only -/+/context lines.
+func extractDiffContent(output string) string {
+	idx := strings.Index(output, "\n")
+	if idx < 0 {
+		return output
+	}
+	return output[idx+1:]
+}
+
+func tokensSummary(b BotInterface) string {
+	p, c := b.TokenUsage()
+	return "↑" + styles.FmtTokens(p) + " ↓" + styles.FmtTokens(c)
 }
 
 func formatTodos(raw string) string {
